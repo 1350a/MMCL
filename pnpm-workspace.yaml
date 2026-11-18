@@ -1,0 +1,8 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11+ 默认拦截依赖构建脚本；放行 Electron 与 esbuild 的二进制下载
+allowBuilds:
+  electron: true
+  esbuild: true

@@ -1,0 +1,10 @@
+node_modules/
+.pnpm-store/
+.electron-cache/
+out/
+dist/
+coverage/
+*.log
+smoke-ok.txt
+.DS_Store
+Thumbs.db
