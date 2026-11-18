@@ -15,7 +15,7 @@
 | 一句话 | AI 驱动的 Minecraft Java 版第三方启动器 |
 | 仓库位置 | `C:\Users\Mac\Project\mcl`（2026-11-18 从 DSH 工作区迁入） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
-| Git | `main` 分支，仓库已初始化，**尚未提交任何 commit** |
+| Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
 | 当前阶段 | **M0 完成**（脚手架 + 核心库 + 单测 + 构建全绿） |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
@@ -115,7 +115,7 @@
 ### 4.4 待办杂项
 
 - [ ] 确定产品正式名（避开 Minecraft 商标）
-- [ ] 补首个 git commit（当前全部文件 untracked）
+- [x] 补首个 git commit（`fa77480`，2026-11-18 完成）
 - [ ] GUI 冒烟：在桌面会话执行一次 `pnpm dev` 确认窗口
 - [ ] 决定是否接入 CI（GitHub Actions：typecheck + test + build）
 
@@ -162,7 +162,7 @@ $env:ELECTRON_CACHE = "C:\Users\Mac\Project\mcl\.electron-cache"
 | 日期 | 动作 |
 |---|---|
 | 2026-11-18 | 项目从 `C:\Users\Mac\Documents\deepseek-harness\default-workspace\mcl` 迁移到 `C:\Users\Mac\Project\mcl`（同卷 rename，含 `.git` 与 `node_modules` 整体搬迁） |
-| 2026-11-18 | 迁移后复验：install / typecheck / test / build 全部通过；新增本交接文档 |
+| 2026-11-18 | 迁移后复验：install（168 包，11.5s）/ typecheck / test（5/5）/ build 全部通过；Electron 二进制完好（`node_modules/.pnpm/electron@33.4.11/.../dist/electron.exe`）；新增本交接文档并提交首个 commit `fa77480` |
 
 ---
 
