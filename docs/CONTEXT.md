@@ -148,15 +148,16 @@ $env:ELECTRON_CACHE = "C:\Users\Mac\Project\MMCL\.electron-cache"
 ### 5.3 已知环境限制（不是项目 bug）
 
 - **GUI 无法在 AI 会话内启动**：Electron 的 Chromium 在该会话的受监督进程树下启动即崩；`ELECTRON_RUN_AS_NODE` 模式可正常执行主进程代码，证明产物本身没问题。**窗口验证请在桌面会话做。**
-- **Chromium 沙箱在本机初始化失败（桌面会话同样会犯）**：`pnpm dev` / `pnpm smoke` 启动即退、无任何输出、退出码 `-2147483645`（`0x80000003` STATUS_BREAKPOINT）；加 `--no-sandbox` 立刻出窗口。本机环境：Windows 10 22H2（19045.7725）+ 腾讯电脑管家系统防护 + Windows Defender。安全软件 hook 进程创建、导致沙箱 broker 起不来是最常见原因，其次是提权终端。排障与逃生舱见下。
+- **Chromium 沙箱启动即崩（已于 2026-11-19 修复，不是环境限制）**：曾经 `pnpm dev` / `pnpm smoke` 启动即退、无任何输出、退出码 `-2147483645`（`0x80000003` STATUS_BREAKPOINT），只有加 `--no-sandbox` 才出窗。真实原因是 pnpm 首次安装的 Electron `dist` 与官方发布包不一致（详见 [INCIDENT-2026-11-19-electron-sandbox.md](./INCIDENT-2026-11-19-electron-sandbox.md)）；用干净的官方 `dist` 覆盖后已恢复正常，**现在不需要 `--no-sandbox`**。再次遇到同症状走该文档第 7 节 SOP，不要先怀疑业务代码。
 - **pnpm 11 破坏性变更**：构建脚本白名单键是 `allowBuilds`（对象形式），写在 `pnpm-workspace.yaml`；`package.json` 的 `pnpm` 字段已被忽略。
 - **electron 下载镜像**：`.npmrc` 里配了 npmmirror；若换机需确认可达。
 
-**沙箱排障（按可能性排序）**
+**沙箱排障（按可能性排序，2026-11-19 更新）**
 
-1. 安全软件（腾讯电脑管家最可疑）：把 `node_modules\electron\dist\electron.exe` 加入信任区，或临时退出"系统防护"后重试 `pnpm dev`；
-2. 终端环境：换普通 Windows Terminal（非管理员、非 DSH 内置终端）重试，排除作业对象/提权影响；
-3. 都不行再用逃生舱。
+1. **Electron 二进制产物不干净（已证实的首要原因）**：`pnpm rebuild electron`，或删掉 `.pnpm\electron@33.4.11` 后重新 `pnpm install`，或直接把官方 zip 解压内容覆盖到 `.pnpm\electron@33.4.11\node_modules\electron\dist`；校验方法与完整证据见 [INCIDENT 文档](./INCIDENT-2026-11-19-electron-sandbox.md)；
+2. 安全软件（腾讯电脑管家最可疑）：把 `node_modules\electron\dist\electron.exe` 加入信任区，或临时退出"系统防护"后重试 `pnpm dev`（本次事故已排除此项）；
+3. 终端环境：换普通 Windows Terminal（非管理员、非 DSH 内置终端）重试，排除作业对象/提权影响；
+4. 都不行再用逃生舱。
 
 **逃生舱脚本（仅限本机开发，禁止用于发布）**
 
@@ -166,6 +167,8 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 ```
 
 代价：关闭 Chromium 的 OS 级沙箱，渲染进程一旦被攻破即等同本机用户权限。本项目只加载本地内容、`contextIsolation` 始终开启，风险可控，但**安装包绝不能带这个开关**；排障完成后应回到 `pnpm dev`。
+
+> 2026-11-19 事故已修复，日常开发请直接用 `pnpm dev`（无需 `--no-sandbox`）。逃生舱保留作下次排障的对照实验手段：若 `dev:ns` 出窗而 `dev` 不出窗，问题就在沙箱层而非业务代码。
 
 ### 5.4 冒烟自检机制
 
@@ -180,6 +183,7 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 | 2026-11-18 | 项目从 `C:\Users\Mac\Documents\deepseek-harness\default-workspace\mcl` 迁移到 `C:\Users\Mac\Project\mcl`（同卷 rename，含 `.git` 与 `node_modules` 整体搬迁） |
 | 2026-11-18 | 迁移后复验：install（168 包，11.5s）/ typecheck / test（5/5）/ build 全部通过；Electron 二进制完好（`node_modules/.pnpm/electron@33.4.11/.../dist/electron.exe`）；新增本交接文档并提交首个 commit `fa77480` |
 | 2026-11-19 | 目录更名为 `MMCL`（用户重命名）；桌面会话复验 test/typecheck/build 全绿，但 GUI 启动崩溃，定位为 Chromium 沙箱初始化失败；新增 `dev:ns` / `smoke:ns` 逃生舱脚本与排障文档 |
+| 2026-11-19 | 事故闭环：根因是 pnpm 首次安装的 Electron `dist` 与官方发布包不一致；用 `etest` 的干净 `dist` 覆盖后恢复，修复后逐文件取证 73/73 与官方 zip 一致。写入 `docs/INCIDENT-2026-11-19-electron-sandbox.md`，并更正 §5.3 旧结论（不再需要 `--no-sandbox`） |
 
 ---
 

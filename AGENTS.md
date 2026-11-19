@@ -55,7 +55,7 @@ docs/                CONTEXT.md（交接）/ DESIGN.md（设计）
 - **`pnpm test` 可能因沙箱告败**：Vitest 依赖 esbuild 子进程（管道通信），受限环境下报 `spawn EPERM`。这是环境限制，不是用例失败 —— 让用户在本机终端复跑。`pnpm typecheck` 通常可用。
 - `pnpm smoke` 成功后写 `apps/launcher/smoke-ok.txt`；CI 判断该文件即可。
 - pnpm 的构建脚本白名单键是 `allowBuilds`，写在 `pnpm-workspace.yaml`（package.json 的 `pnpm` 字段已被忽略）。
-- **本机 Chromium 沙箱初始化失败**：`pnpm dev` / `pnpm smoke` 启动即退（退出码 `-2147483645` = `0x80000003`），加 `--no-sandbox` 可出窗口；常见原因是安全软件 hook（本机为腾讯电脑管家）或提权终端。逃生舱：`pnpm dev:ns` / `pnpm smoke:ns`，仅供本机排障，详见 CONTEXT.md §5.3。
+- **Chromium 沙箱启动即崩（2026-11-19 已修复）**：曾经 `pnpm dev` / `pnpm smoke` 启动即退（退出码 `-2147483645` = `0x80000003`），只有 `--no-sandbox` 能出窗。根因是 pnpm 首次安装的 Electron `dist` 与官方发布包不一致；换成干净官方 `dist` 后已恢复，**日常不需要 `--no-sandbox`**。复发时按 `docs/INCIDENT-2026-11-19-electron-sandbox.md` 第 7 节 SOP 处置，别先怀疑业务代码。逃生舱 `pnpm dev:ns` / `pnpm smoke:ns` 仅作对照实验。
 
 ## 7. 下一步（M1，按顺序）
 

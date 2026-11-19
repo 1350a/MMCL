@@ -39,6 +39,10 @@ docs/DESIGN.md        设计文档（选型、架构、许可证、路线图）
 
 注意：在受限或无人值守的自动化环境（如 AI 会话沙箱）中 Chromium 可能无法启动 GUI（进程树监督导致 electron.exe 启动即崩溃），这属于环境限制而非项目问题；请在本机桌面会话执行 `pnpm dev` 或 `pnpm smoke` 验证窗口。
 
+## 故障排查
+
+窗口起不来时先看 [docs/INCIDENT-2026-11-19-electron-sandbox.md](docs/INCIDENT-2026-11-19-electron-sandbox.md)：那个事故的症状是"启动即退、退出码 `-2147483645`、只有 `--no-sandbox` 能出窗"，根因是 pnpm 安装的 Electron `dist` 脏产物，处置只要重装/覆盖二进制，不用改业务代码。
+
 ## 许可证纪律
 
 ISC 项目；依赖限宽松许可；不搬运 GPL 代码；无许可证仓库不可用。详见 `docs/DESIGN.md` 第 6 节。
