@@ -1,0 +1,30 @@
+{
+  // 仓库统一 LF；Windows 上 git 由 .gitattributes 的 eol=lf 兜底
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "editor.tabSize": 2,
+
+  // 格式化交给 Prettier（.prettierrc.json 已对齐项目现有风格）
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+
+  // 用仓库内的 TS 5.6，而不是 VS Code 自带的版本
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+
+  // 构建产物和依赖不进搜索/监听，避免卡顿
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/out": true,
+    "**/dist": true,
+    "pnpm-lock.yaml": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/out/**": true,
+    "**/dist/**": true
+  },
+
+  "terminal.integrated.defaultProfile.windows": "PowerShell"
+}

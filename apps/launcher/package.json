@@ -7,10 +7,13 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:ns": "electron-vite dev --noSandbox",
     "build": "electron-vite build",
     "start": "electron-vite preview",
+    "start:ns": "electron-vite preview --noSandbox",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "smoke": "electron-vite build && electron . --smoke-test"
+    "smoke": "electron-vite build && electron . --smoke-test",
+    "smoke:ns": "electron-vite build && electron . --smoke-test --no-sandbox"
   },
   "dependencies": {
     "@mcl/core": "workspace:*",

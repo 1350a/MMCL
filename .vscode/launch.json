@@ -1,0 +1,35 @@
+{
+  // 基于 electron-vite 官方调试文档改造（monorepo：cwd 指向 apps/launcher）
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Electron: 主进程",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/apps/launcher",
+      "runtimeExecutable": "${workspaceFolder}/apps/launcher/node_modules/.bin/electron-vite",
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/apps/launcher/node_modules/.bin/electron-vite.cmd"
+      },
+      "runtimeArgs": ["dev", "--sourcemap"],
+      "env": { "REMOTE_DEBUGGING_PORT": "9222" },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "Electron: 渲染进程（附加）",
+      "type": "chrome",
+      "request": "attach",
+      "address": "localhost",
+      "port": 9222,
+      "webRoot": "${workspaceFolder}/apps/launcher/src/renderer"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Electron: 全部（先起主进程）",
+      "configurations": ["Electron: 主进程", "Electron: 渲染进程（附加）"],
+      "stopAll": true
+    }
+  ]
+}

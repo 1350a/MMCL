@@ -6,6 +6,11 @@ import { fileSha1 } from '@mcl/core'
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 const isSmokeTest = process.argv.includes('--smoke-test')
 
+// 逃生舱：部分机器 Chromium 沙箱初始化失败（启动即崩、无输出），本机排障可用 --no-sandbox
+if (process.argv.includes('--no-sandbox')) {
+  console.warn('[mcl] 警告：Chromium 沙箱已关闭（--no-sandbox），仅供本机排障，切勿用于发布构建')
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1080,

@@ -9,9 +9,11 @@
   },
   "scripts": {
     "dev": "pnpm --filter @mcl/core build && pnpm --filter @mcl/app dev",
+    "dev:ns": "pnpm --filter @mcl/core build && pnpm --filter @mcl/app dev:ns",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "smoke": "pnpm --filter @mcl/core build && pnpm --filter @mcl/app smoke"
+    "smoke": "pnpm --filter @mcl/core build && pnpm --filter @mcl/app smoke",
+    "smoke:ns": "pnpm --filter @mcl/core build && pnpm --filter @mcl/app smoke:ns"
   }
 }
