@@ -16,7 +16,7 @@
 | 仓库位置 | `C:\Users\Mac\Project\mcl`（2026-11-18 从 DSH 工作区迁入） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
 | Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
-| 当前阶段 | **M0 完成**（脚手架 + 核心库 + 单测 + 构建全绿） |
+| 当前阶段 | **M1 代码完成**（core 侧真实冒烟通过；UI 端到端验收待桌面执行） |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
 ---
@@ -89,16 +89,20 @@
 | 构建 | `pnpm build` | ✅ main 2.05 kB、preload 0.25 kB、renderer 216.78 kB |
 | GUI 冒烟 | `pnpm dev` / `pnpm smoke` | ⚠️ **待本机桌面验证**（见 §5.3） |
 
-### 4.2 下一步：M1（能玩原版）
+### 4.2 M1（能玩原版）——2026-11-20 代码完成
 
-按依赖顺序拆解，每步都要在 `@mcl/core` 里写测试：
+按依赖顺序拆解，每步带 `@mcl/core` 测试（7 个测试文件 42 用例全过）：
 
-- [ ] **M1-1 离线账户**：生成离线 UUID（`uuid v3(MD5)` 对 `OfflinePlayer:<name>`）、玩家名校验、账户持久化
-- [ ] **M1-2 版本元数据**：拉取 version_manifest → 选定版本 → 取 version json
-- [ ] **M1-3 资源下载**：libraries（含 natives 解压规则）、client jar、assets（objects 哈希去重）
-- [ ] **M1-4 启动装配**：classpath 拼接、JVM 参数（含 `-Djava.library.path`）、主类与游戏参数、cwd 隔离到实例目录
-- [ ] **M1-5 启动与日志**：子进程启动、stdout/stderr 落盘（`logs/latest.log` 同款路径）、退出码上报、崩溃日志定位
-- [ ] **M1-6 UI 最小闭环**：输入玩家名 → 选版本 → 安装进度 → 启动按钮
+- [x] **M1-1 离线账户**：`account.ts` —— `offlineUuid`（MD5 + v3 置位，金标对照本机 JRE 8 `nameUUIDFromBytes` 实测一致）、玩家名校验、`accounts.json` 持久化
+- [x] **M1-2 版本元数据**：`manifest.ts` + `version.ts` + `rules.ts` —— manifest_v2 拉取、版本 JSON sha1 校验、inheritsFrom 合并（按 group:artifact 去重）、rules 评估（**实测裁决的官方语义：最后匹配规则决定 + 有 rules 无匹配默认不允许**）
+- [x] **M1-3 资源下载**：`install.ts` —— client jar / libraries（rules 过滤 + 旧式 mavenPath 兜底）/ natives classifier 解压（adm-zip，MIT）/ assets objects 按 hash 去重；并发 8、复用 `downloadFile` 续传 + SHA1、已存在校验通过即跳过；`assetBaseUrl` 可配镜像、`skipAssets` 用于冒烟
+- [x] **M1-4 启动装配**：`launch.ts` —— 新式 `arguments.{game,jvm}` 与旧式 `minecraftArguments` 双格式；classpath/natives/模板变量（`${auth_player_name}` 等）替换（token 级替换避免含空格路径被拆散）；产出 `LaunchSpec` 不直接 spawn
+- [x] **M1-5 Java 检测 + 启动与日志**：`java.ts`（配置路径 → JAVA_HOME → PATH，`-version` 解析）+ `gameProcess.ts`（spawn、stdout/stderr 追加 `logs/latest.log`、退出码单发上报）
+- [x] **M1-6 UI 最小闭环**：`main/launcher.ts`（LauncherService 编排）+ IPC 三处同步（settings/account/version/game 四组 11 个 channel + 4 个推送事件）+ App.tsx（账户 → Java 路径 → 版本安装进度条 → 启动/停止 + 日志区）
+
+**已验证（会话内真实数据冒烟，2026-11-20）**：官方清单 → 1.16.5 安装（52 个文件含 client/libraries/natives）→ Java 8 兼容通过 → 装配 → 启动进程存活 60s，日志出现 `Setting user: Notch`、`OpenAL initialized`、纹理图集创建（主菜单加载里程碑）。
+
+**待办**：桌面端 `pnpm dev` 端到端验收（含 assets 全量 334MB 下载 + 进入主菜单确认）；本会话内 `pnpm smoke` 正常沙箱模式崩（0x80000003）而 `smoke:ns` 通过，需桌面复跑确认是受限会话限制（见 §5.3 与 §6）。
 
 **M1 验收**：在干净环境选一个原版版本，能下载完并进入游戏主菜单。
 

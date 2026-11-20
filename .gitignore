@@ -9,3 +9,6 @@ coverage/
 smoke-ok.txt
 .DS_Store
 Thumbs.db
+
+.mimosa/
+.zcode/

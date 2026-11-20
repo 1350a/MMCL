@@ -1,0 +1,235 @@
+import { afterAll, describe, expect, it } from 'vitest'
+import { createServer, type Server } from 'node:http'
+import { createHash, randomBytes } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import AdmZip from 'adm-zip'
+import type { AddressInfo } from 'node:net'
+import { installVersion, mavenPath } from '../src'
+import type { VersionJson } from '../src'
+
+const sha1 = (buf: Buffer | string): string => createHash('sha1').update(buf).digest('hex')
+
+interface Fixture {
+  server: Server
+  baseUrl: string
+  /** 各路径请求计数（断言 skip / 去重用）。 */
+  counts: Map<string, number>
+}
+
+/** 本地下载服务器：路径 → 内容，记录请求次数。 */
+async function startFixture(routes: Record<string, Buffer | string>): Promise<Fixture> {
+  const counts = new Map<string, number>()
+  const server = createServer((req, res) => {
+    counts.set(req.url ?? '', (counts.get(req.url ?? '') ?? 0) + 1)
+    const body = routes[req.url ?? '']
+    if (body === undefined) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    res.writeHead(200, { 'Content-Length': String(body.length) })
+    res.end(body)
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  return { server, baseUrl: `http://127.0.0.1:${port}`, counts }
+}
+
+/** 打一个 natives jar：含 native.dll、META-INF/MANIFEST.MF、other.txt。 */
+function makeNativeJar(): Buffer {
+  const zip = new AdmZip()
+  zip.addFile('native.dll', Buffer.from('fake-dll-content'))
+  zip.addFile('META-INF/MANIFEST.MF', Buffer.from('Manifest-Version: 1.0'))
+  zip.addFile('other.txt', Buffer.from('keep me'))
+  return zip.toBuffer()
+}
+
+const servers: Server[] = []
+afterAll(async () => {
+  await Promise.all(servers.map((s) => new Promise<void>((resolve) => s.close(() => resolve()))))
+})
+
+describe('mavenPath', () => {
+  it('坐标转 Maven 布局路径，支持 classifier', () => {
+    expect(mavenPath('org.lwjgl:lwjgl:3.2.2')).toBe('org/lwjgl/lwjgl/3.2.2/lwjgl-3.2.2.jar')
+    expect(mavenPath('g:a:1.0', 'natives-windows')).toBe('g/a/1.0/a-1.0-natives-windows.jar')
+    expect(mavenPath('g:a:1.0:natives-windows')).toBe('g/a/1.0/a-1.0-natives-windows.jar')
+    expect(() => mavenPath('bad')).toThrow(/invalid maven coordinate/)
+  })
+})
+
+describe('installVersion', () => {
+  it('下载 client jar、libraries（rules 过滤）、natives 解压、assets 去重', async () => {
+    const clientPayload = randomBytes(4096)
+    const libPayload = randomBytes(1024)
+    const nativeJar = makeNativeJar()
+    const excludedLibPayload = randomBytes(128)
+    const assetA = Buffer.from('asset-content-a')
+    const xmlPayload = Buffer.from('<Configuration/>')
+
+    // asset index：两个名字指向同一 hash，验证去重
+    const indexJson = {
+      objects: {
+        'a.txt': { hash: sha1(assetA), size: assetA.length },
+        'b.txt': { hash: sha1(assetA), size: assetA.length }
+      }
+    }
+    const indexText = JSON.stringify(indexJson)
+    const assetPrefix = sha1(assetA).slice(0, 2)
+
+    const fixture = await startFixture({
+      '/client.jar': clientPayload,
+      '/lib-a.jar': libPayload,
+      '/lib-osx.jar': excludedLibPayload,
+      '/natives.jar': nativeJar,
+      '/index.json': indexText,
+      [`/${assetPrefix}/${sha1(assetA)}`]: assetA,
+      '/client-test.xml': xmlPayload
+    })
+    servers.push(fixture.server)
+
+    const versionJson: VersionJson = {
+      id: 'test-1.0',
+      type: 'release',
+      mainClass: 'net.minecraft.client.main.Main',
+      downloads: {
+        client: { sha1: sha1(clientPayload), size: clientPayload.length, url: `${fixture.baseUrl}/client.jar` }
+      },
+      assetIndex: {
+        id: 'test-index',
+        sha1: sha1(indexText),
+        size: indexText.length,
+        totalSize: assetA.length,
+        url: `${fixture.baseUrl}/index.json`
+      },
+      assets: 'test-index',
+      javaVersion: { component: 'jre-legacy', majorVersion: 8 },
+      libraries: [
+        {
+          name: 'g:a:1.0',
+          downloads: {
+            artifact: { path: 'g/a/1.0/a-1.0.jar', sha1: sha1(libPayload), size: libPayload.length, url: `${fixture.baseUrl}/lib-a.jar` }
+          }
+        },
+        {
+          name: 'g:osx:1.0',
+          rules: [{ action: 'allow', os: { name: 'osx' } }],
+          downloads: {
+            artifact: { path: 'g/osx/1.0/osx-1.0.jar', sha1: sha1(excludedLibPayload), size: excludedLibPayload.length, url: `${fixture.baseUrl}/lib-osx.jar` }
+          }
+        },
+        {
+          name: 'g:native:1.0',
+          downloads: {
+            artifact: { path: 'g/native/1.0/native-1.0.jar', sha1: sha1(libPayload), size: libPayload.length, url: `${fixture.baseUrl}/lib-a.jar` },
+            classifiers: {
+              'natives-windows': {
+                path: 'g/native/1.0/native-1.0-natives-windows.jar',
+                sha1: sha1(nativeJar),
+                size: nativeJar.length,
+                url: `${fixture.baseUrl}/natives.jar`
+              }
+            }
+          },
+          extract: { exclude: ['META-INF/'] }
+        }
+      ],
+      logging: {
+        client: {
+          argument: '-Dlog4j.configurationFile=${path}',
+          file: { id: 'client-test.xml', sha1: sha1(xmlPayload), size: xmlPayload.length, url: `${fixture.baseUrl}/client-test.xml` },
+          type: 'log4j2-xml'
+        }
+      }
+    }
+
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-install-'))
+    const progresses: number[] = []
+    const result = await installVersion(versionJson, root, {
+      os: { name: 'windows', arch: 'x64' },
+      assetBaseUrl: fixture.baseUrl,
+      onProgress: (p) => progresses.push(p.completed)
+    })
+
+    // client jar 与 version json 落盘
+    expect(await fs.readFile(join(root, 'versions', 'test-1.0', 'test-1.0.jar'))).toEqual(clientPayload)
+    const savedJson = JSON.parse(await fs.readFile(join(root, 'versions', 'test-1.0', 'test-1.0.json'), 'utf8'))
+    expect(savedJson.id).toBe('test-1.0')
+
+    // libraries：适用的下载，osx-only 排除
+    expect(await fs.readFile(join(root, 'libraries', 'g/a/1.0/a-1.0.jar'))).toEqual(libPayload)
+    await expect(fs.access(join(root, 'libraries', 'g/osx/1.0/osx-1.0.jar'))).rejects.toThrow()
+
+    // natives 解压：dll 与普通文件保留，META-INF 排除
+    expect(await fs.readFile(join(result.nativesDir, 'native.dll'))).toEqual(Buffer.from('fake-dll-content'))
+    expect(await fs.readFile(join(result.nativesDir, 'other.txt'))).toEqual(Buffer.from('keep me'))
+    await expect(fs.access(join(result.nativesDir, 'META-INF'))).rejects.toThrow()
+
+    // assets：index 与 objects（同 hash 去重只下载一次）
+    expect(await fs.readFile(join(root, 'assets', 'indexes', 'test-index.json'))).toEqual(Buffer.from(indexText))
+    expect(await fs.readFile(join(root, 'assets', 'objects', assetPrefix, sha1(assetA)))).toEqual(assetA)
+    expect(fixture.counts.get(`/${assetPrefix}/${sha1(assetA)}`)).toBe(1)
+
+    // logging 配置
+    expect(await fs.readFile(join(root, 'assets', 'log_configs', 'client-test.xml'))).toEqual(xmlPayload)
+    expect(result.logging?.argument).toBe('-Dlog4j.configurationFile=${path}')
+    expect(result.logging?.file).toContain(join('assets', 'log_configs', 'client-test.xml'))
+
+    // 返回路径与进度
+    expect(result.clientJar).toBe(join(root, 'versions', 'test-1.0', 'test-1.0.jar'))
+    expect(result.nativesDir).toBe(join(root, 'versions', 'test-1.0', 'natives'))
+    expect(result.assetsIndexId).toBe('test-index')
+    expect(progresses.at(-1)).toBe(progresses.at(0)) // 进度单调
+    expect(progresses.at(-1)).toBeGreaterThan(0)
+  })
+
+  it('重复安装时已存在且校验通过的文件不再发起请求', async () => {
+    const clientPayload = randomBytes(1024)
+    const fixture = await startFixture({ '/client.jar': clientPayload })
+    servers.push(fixture.server)
+
+    const versionJson: VersionJson = {
+      id: 'reinstall-1.0',
+      type: 'release',
+      mainClass: 'C',
+      libraries: [],
+      downloads: {
+        client: { sha1: sha1(clientPayload), size: clientPayload.length, url: `${fixture.baseUrl}/client.jar` }
+      }
+    }
+
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-install-'))
+    await installVersion(versionJson, root, { os: { name: 'windows' } })
+    expect(fixture.counts.get('/client.jar')).toBe(1)
+
+    await installVersion(versionJson, root, { os: { name: 'windows' } })
+    expect(fixture.counts.get('/client.jar')).toBe(1) // 第二次命中缓存
+  })
+
+  it('校验不匹配的已存在文件会被重新下载', async () => {
+    const clientPayload = randomBytes(1024)
+    const fixture = await startFixture({ '/client.jar': clientPayload })
+    servers.push(fixture.server)
+
+    const versionJson: VersionJson = {
+      id: 'corrupt-1.0',
+      type: 'release',
+      mainClass: 'C',
+      libraries: [],
+      downloads: {
+        client: { sha1: sha1(clientPayload), size: clientPayload.length, url: `${fixture.baseUrl}/client.jar` }
+      }
+    }
+
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-install-'))
+    const jar = join(root, 'versions', 'corrupt-1.0', 'corrupt-1.0.jar')
+    await fs.mkdir(join(root, 'versions', 'corrupt-1.0'), { recursive: true })
+    await fs.writeFile(jar, 'corrupted-content')
+
+    await installVersion(versionJson, root, { os: { name: 'windows' } })
+    expect(await fs.readFile(jar)).toEqual(clientPayload)
+    expect(fixture.counts.get('/client.jar')).toBe(1)
+  })
+})

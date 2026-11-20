@@ -21,3 +21,30 @@ export class ChecksumMismatchError extends Error {
     this.name = 'ChecksumMismatchError'
   }
 }
+
+/** 玩家名不合法（3-16 位字母/数字/下划线）。 */
+export class InvalidPlayerNameError extends Error {
+  constructor(readonly name: string) {
+    super(`invalid player name: ${name}`)
+    this.name = 'InvalidPlayerNameError'
+  }
+}
+
+/** 找不到可用的 Java 运行时。 */
+export class JavaNotFoundError extends Error {
+  constructor(readonly tried: string[]) {
+    super(`java executable not found (tried: ${tried.join(', ')})`)
+    this.name = 'JavaNotFoundError'
+  }
+}
+
+/** Java 主版本与目标版本要求不符。 */
+export class JavaVersionMismatchError extends Error {
+  constructor(
+    readonly majorVersion: number,
+    readonly requiredMajorVersion: number
+  ) {
+    super(`java ${majorVersion} does not meet requirement: java ${requiredMajorVersion}`)
+    this.name = 'JavaVersionMismatchError'
+  }
+}

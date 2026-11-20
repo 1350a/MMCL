@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileSha1 } from '@mcl/core'
+import { LauncherService } from './launcher'
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 const isSmokeTest = process.argv.includes('--smoke-test')
@@ -63,6 +64,25 @@ function registerIpc(): void {
     }
     return fileSha1(filePath)
   })
+
+  // M1：账户 / 设置 / 版本 / 启动（业务编排全部在 LauncherService）
+  const service = new LauncherService(app.getPath('userData'), (channel, payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(channel, payload)
+    }
+  })
+
+  ipcMain.handle('settings:get', () => service.getSettings())
+  ipcMain.handle('settings:setJavaPath', (_e, javaPath: string) => service.setJavaPath(javaPath))
+  ipcMain.handle('account:get', () => service.getAccount())
+  ipcMain.handle('account:save', (_e, name: string) => service.saveAccount(name))
+  ipcMain.handle('version:listRemote', () => service.listRemoteVersions())
+  ipcMain.handle('version:listInstalled', () => service.listInstalledVersions())
+  ipcMain.handle('version:install', (_e, id: string) => service.installVersion(id))
+  ipcMain.handle('game:launch', (_e, id: string) => service.launchVersion(id))
+  ipcMain.handle('game:stop', () => service.stopGame())
+  ipcMain.handle('game:readLog', () => service.readGameLog())
+  ipcMain.handle('game:isRunning', () => service.isGameRunning())
 }
 
 app.whenReady().then(() => {
