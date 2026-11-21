@@ -45,10 +45,11 @@ function App() {
           setInstallError('')
           window.mcl.listInstalledVersions().then((list) => {
             setInstalled(list)
-            if (!selectedInstalled) setSelectedInstalled(p.id)
+            setSelectedInstalled(p.id) // 装完即选中，可直接点启动
           })
         } else {
           setInstallError(p.error ?? '安装失败')
+          window.mcl.listInstalledVersions().then(setInstalled)
         }
       }),
       window.mcl.onGameLog(({ line, source }) => {

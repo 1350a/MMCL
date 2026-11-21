@@ -92,6 +92,10 @@ export async function downloadFile(
       await verifyFile(part, checksum, algorithm)
     } catch (error) {
       await fs.rm(part, { force: true }).catch(() => undefined)
+      // .part 前缀与服务器内容不一致（如上次异常中断留下的损坏 .part）→ 全量重下一次自愈
+      if (!isRetry) {
+        return downloadFile(url, dest, options, true)
+      }
       throw error
     }
   }

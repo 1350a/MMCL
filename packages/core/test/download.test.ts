@@ -114,6 +114,21 @@ describe('downloadFile', () => {
     expect(await exists(`${dest}.part`)).toBe(false)
   })
 
+  it('损坏的 .part 残留：续传拼接校验失败后自动全量重下自愈', async () => {
+    const fixture = await startFixture(128 * 1024)
+    servers.push(fixture.server)
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    const dest = join(dir, 'file.bin')
+    // 长度合理但内容错误的 .part（模拟上次异常中断留下的垃圾）
+    await fs.writeFile(`${dest}.part`, randomBytes(64 * 1024))
+
+    await downloadFile(`${fixture.baseUrl}/file.bin`, dest, { checksum: sha1(fixture.payload) })
+
+    expect(fixture.sawRange()).toBe(true) // 先尝试了续传
+    expect(await fs.readFile(dest)).toEqual(fixture.payload) // 自愈成功
+    expect(await exists(`${dest}.part`)).toBe(false)
+  })
+
   it('404 抛出 HttpError', async () => {
     const fixture = await startFixture(128)
     servers.push(fixture.server)
