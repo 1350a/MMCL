@@ -120,9 +120,20 @@ export class LauncherService {
       const entries = await fs.readdir(dir, { withFileTypes: true })
       const ids: string[] = []
       for (const e of entries) {
-        if (e.isDirectory() && (await fs.access(join(dir, e.name, `${e.name}.json`)).then(() => true, () => false))) {
+        if (!e.isDirectory()) continue
+        const versionDir = join(dir, e.name)
+        const has = async (p: string): Promise<boolean> =>
+          fs.access(p).then(() => true, () => false)
+        const hasJson = await has(join(versionDir, `${e.name}.json`))
+        const hasMarker = await has(join(versionDir, '.install-ok'))
+        if (hasJson && hasMarker) {
+          ids.push(e.name)
+        } else if (hasJson && (await has(join(versionDir, `${e.name}.jar`)))) {
+          // 旧安装（无标记时代）：json + jar 都在即视为已装，补标记迁移
+          await fs.writeFile(join(versionDir, '.install-ok'), 'migrated\n')
           ids.push(e.name)
         }
+        // 其余（json 而无 jar / 无标记且无 jar）视为半成品，不进列表
       }
       return ids.sort()
     } catch {

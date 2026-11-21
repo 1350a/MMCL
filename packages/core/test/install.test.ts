@@ -208,6 +208,93 @@ describe('installVersion', () => {
     expect(fixture.counts.get('/client.jar')).toBe(1) // 第二次命中缓存
   })
 
+  it('安装成功写 .install-ok 标记；重装失败时标记被清除', async () => {
+    const clientPayload = randomBytes(1024)
+    const fixture = await startFixture({ '/client.jar': clientPayload })
+    servers.push(fixture.server)
+
+    const versionJson: VersionJson = {
+      id: 'marker-1.0',
+      type: 'release',
+      mainClass: 'C',
+      libraries: [],
+      downloads: {
+        client: { sha1: sha1(clientPayload), size: clientPayload.length, url: `${fixture.baseUrl}/client.jar` }
+      }
+    }
+
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-install-'))
+    await installVersion(versionJson, root, { os: { name: 'windows' } })
+    const marker = join(root, 'versions', 'marker-1.0', '.install-ok')
+    await expect(fs.access(marker)).resolves.toBeUndefined()
+
+    // 重装（服务器 404）→ 开头清标记 → 失败后不残留（先删 jar 迫使重新下载）
+    await fs.rm(join(root, 'versions', 'marker-1.0', 'marker-1.0.jar'))
+    const broken: VersionJson = { ...versionJson, downloads: { client: { sha1: sha1(clientPayload), size: clientPayload.length, url: `${fixture.baseUrl}/missing` } } }
+    await expect(installVersion(broken, root, { os: { name: 'windows' } })).rejects.toThrow(/共 1 个文件失败/)
+    await expect(fs.access(marker)).rejects.toThrow()
+  })
+
+  it('assets objects fastSkip：size 一致的已存在文件不发请求，size 不符才重新下载', async () => {
+    const assetOk = Buffer.from('asset-ok-content')
+    const assetBad = Buffer.from('asset-bad-content')
+    const indexJson = {
+      objects: {
+        'ok.txt': { hash: sha1(assetOk), size: assetOk.length },
+        'bad.txt': { hash: sha1(assetBad), size: 999999 } // 声明的 size 与实际不符 → 必须下载
+      }
+    }
+    const indexText = JSON.stringify(indexJson)
+    const prefixOk = sha1(assetOk).slice(0, 2)
+    const prefixBad = sha1(assetBad).slice(0, 2)
+
+    const fixture = await startFixture({
+      '/index.json': indexText,
+      [`/${prefixOk}/${sha1(assetOk)}`]: assetOk,
+      [`/${prefixBad}/${sha1(assetBad)}`]: assetBad
+    })
+    servers.push(fixture.server)
+
+    const versionJson: VersionJson = {
+      id: 'fastskip-1.0',
+      type: 'release',
+      mainClass: 'C',
+      libraries: [],
+      assetIndex: { id: 'fastskip', sha1: sha1(indexText), size: indexText.length, totalSize: 0, url: `${fixture.baseUrl}/index.json` },
+      assets: 'fastskip'
+    }
+
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-install-'))
+    // 预放一个 size 正确的 ok 资源；bad 资源缺失
+    await fs.mkdir(join(root, 'assets', 'objects', prefixOk), { recursive: true })
+    await fs.writeFile(join(root, 'assets', 'objects', prefixOk, sha1(assetOk)), assetOk)
+
+    await installVersion(versionJson, root, { os: { name: 'windows' }, assetBaseUrl: fixture.baseUrl })
+
+    expect(fixture.counts.get(`/${prefixOk}/${sha1(assetOk)}`)).toBeUndefined() // fastSkip 命中，零请求
+    expect(fixture.counts.get(`/${prefixBad}/${sha1(assetBad)}`)).toBe(1) // size 不符 → 下载
+  })
+
+  it('多任务失败时聚合为一条错误', async () => {
+    const fixture = await startFixture({}) // 全部 404
+    servers.push(fixture.server)
+
+    const versionJson: VersionJson = {
+      id: 'aggregate-1.0',
+      type: 'release',
+      mainClass: 'C',
+      libraries: [
+        { name: 'g:a:1.0', downloads: { artifact: { path: 'g/a/1.0/a-1.0.jar', sha1: 'x'.repeat(40), size: 1, url: `${fixture.baseUrl}/missing-a` } } }
+      ],
+      downloads: {
+        client: { sha1: 'x'.repeat(40), size: 1, url: `${fixture.baseUrl}/missing-b` }
+      }
+    }
+
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-install-'))
+    await expect(installVersion(versionJson, root, { os: { name: 'windows' } })).rejects.toThrow(/共 2 个文件失败/)
+  })
+
   it('校验不匹配的已存在文件会被重新下载', async () => {
     const clientPayload = randomBytes(1024)
     const fixture = await startFixture({ '/client.jar': clientPayload })

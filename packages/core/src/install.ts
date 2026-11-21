@@ -9,12 +9,19 @@ import type { Library, VersionJson } from './version'
 /** 资源对象下载域名（URL 模式：<前2位hex>/<sha1>）。 */
 const ASSETS_BASE_URL = 'https://resources.download.minecraft.net'
 
+/** 版本安装完成标记（写于 versions/<id>/ 下，供"已安装"列表过滤半成品）。 */
+const INSTALL_OK_MARKER = '.install-ok'
+
 /** 单个文件下载任务。 */
 interface DownloadTask {
   url: string
   dest: string
   sha1: string
   label: string
+  /** 期望大小（fastSkip 用）。 */
+  size?: number
+  /** 已存在文件与该 size 一致时直接跳过（用于 assets objects：hash 即文件名，全量 sha1 太慢）。 */
+  fastSkip?: boolean
 }
 
 export interface InstallProgress {
@@ -66,7 +73,15 @@ function nativesKey(osName: string): string {
 
 /** 下载单个文件：已存在且校验通过则跳过，否则复用 downloadFile（.part 续传 + SHA1）。 */
 async function downloadTask(task: DownloadTask, signal?: AbortSignal): Promise<void> {
-  if (task.sha1) {
+  if (task.fastSkip && task.sha1) {
+    try {
+      const st = await fs.stat(task.dest)
+      if (st.size === task.size) return // hash 即文件名，size 一致即视为完好
+    } catch {
+      // 文件不存在 → 走下载
+    }
+  }
+  if (task.sha1 && !task.fastSkip) {
     try {
       await verifyFile(task.dest, task.sha1)
       return
@@ -77,7 +92,7 @@ async function downloadTask(task: DownloadTask, signal?: AbortSignal): Promise<v
   await downloadFile(task.url, task.dest, { checksum: task.sha1 || undefined, signal })
 }
 
-/** 固定并发数的任务池，fail-fast。 */
+/** 固定并发数的任务池：一个失败后停止派发新任务，结束时聚合报错。 */
 async function runPool(
   tasks: DownloadTask[],
   concurrency: number,
@@ -86,16 +101,28 @@ async function runPool(
 ): Promise<void> {
   let index = 0
   let completed = 0
+  const errors: unknown[] = []
   const workers = Array.from({ length: Math.max(1, Math.min(concurrency, tasks.length)) }, async () => {
     while (index < tasks.length) {
       if (signal?.aborted) throw new Error('aborted')
+      if (errors.length > 0) return // 已有失败，不再派发新任务
       const task = tasks[index++]
-      await downloadTask(task, signal)
+      try {
+        await downloadTask(task, signal)
+      } catch (err) {
+        errors.push(err)
+        continue
+      }
       completed++
       onProgress?.({ completed, total: tasks.length, file: task.label })
     }
   })
   await Promise.all(workers)
+  if (errors.length > 0) {
+    const first = errors[0] instanceof Error ? errors[0].message : String(errors[0])
+    const more = errors.length > 1 ? `（另 ${errors.length - 1} 个文件同样失败）` : ''
+    throw new Error(`${first} — 共 ${errors.length} 个文件失败`)
+  }
 }
 
 /** 评估 library 是否适用于当前平台（rules 过滤）。 */
@@ -180,6 +207,8 @@ export async function installVersion(
 
   await fs.mkdir(versionDir, { recursive: true })
   await fs.writeFile(join(versionDir, `${id}.json`), JSON.stringify(versionJson, null, 2))
+  // 重装前先清完成标记：中断后不会带着旧标记混进"已安装"列表
+  await fs.rm(join(versionDir, INSTALL_OK_MARKER), { force: true })
 
   const tasks: DownloadTask[] = []
 
@@ -247,6 +276,8 @@ export async function installVersion(
         url: `${assetBase}/${prefix}/${hash}`,
         dest: join(rootDir, 'assets', 'objects', prefix, hash),
         sha1: hash,
+        size: objects.get(hash)!.size,
+        fastSkip: true,
         label: `asset-${hash.slice(0, 8)}`
       })
     }
@@ -273,6 +304,7 @@ export async function installVersion(
   }
 
   const clientJar = join(versionDir, `${id}.jar`)
+  await fs.writeFile(join(versionDir, INSTALL_OK_MARKER), `${new Date().toISOString()}\n`)
   return {
     versionDir,
     clientJar,
