@@ -19,6 +19,8 @@ import {
   saveAccounts,
   validatePlayerName
 } from '@mcl/core'
+import { ChatClient, ChatSession } from '@mcl/agent'
+import type { AiTool } from '@mcl/agent'
 import type { Account, RuntimeInfo, JavaInfo, VersionJson, VersionManifest } from '@mcl/core'
 
 export interface RemoteVersion {
@@ -33,8 +35,22 @@ export interface SettingsPayload {
   javaRaw?: string
 }
 
+export interface AiConfigPayload {
+  baseUrl: string
+  apiKeyMasked: string
+  model: string
+  configured: boolean
+}
+
+export interface AiSettings {
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
 interface SettingsFile {
   javaPath?: string
+  ai?: AiSettings
 }
 
 /** 启动器运行时状态与编排：IPC 路由层只调用这里的方法。 */
@@ -274,6 +290,118 @@ export class LauncherService {
 
   isGameRunning(): boolean {
     return this.game !== null
+  }
+
+  // ---- AI 面板（M2-2）----
+
+  private aiSession: ChatSession | null = null
+
+  getAiConfig(): AiConfigPayload {
+    const { ai } = this.readSettings()
+    const configured = !!(ai?.baseUrl && ai?.apiKey && ai?.model)
+    return {
+      baseUrl: ai?.baseUrl ?? '',
+      apiKeyMasked: ai?.apiKey ? `${ai.apiKey.slice(0, 6)}...${ai.apiKey.slice(-4)}` : '',
+      model: ai?.model ?? '',
+      configured
+    }
+  }
+
+  async setAiConfig(ai: AiSettings): Promise<AiConfigPayload> {
+    if (
+      typeof ai !== 'object' ||
+      typeof ai.baseUrl !== 'string' ||
+      typeof ai.apiKey !== 'string' ||
+      typeof ai.model !== 'string'
+    ) {
+      throw new Error('invalid AI config')
+    }
+    const settings = this.readSettings()
+    settings.ai = { baseUrl: ai.baseUrl.trim(), apiKey: ai.apiKey.trim(), model: ai.model.trim() }
+    await this.writeSettings(settings)
+    // 配置变化后重置会话（system prompt 无关，但客户端参数已变）
+    this.aiSession = null
+    return this.getAiConfig()
+  }
+
+  /** 构造 M2 两个工具：list_versions / read_crash_log（handler 注入 launcher 数据）。 */
+  private buildAiTools(): AiTool[] {
+    return [
+      {
+        name: 'list_versions',
+        description: '列出启动器中已安装的 Minecraft 版本与内置 Java 运行时，以及游戏是否正在运行。',
+        parameters: { type: 'object', properties: {} },
+        handler: async () => {
+          const [installed, runtimes] = await Promise.all([this.listInstalledVersions(), this.listRuntimes()])
+          return JSON.stringify({
+            installedVersions: installed,
+            builtInRuntimes: runtimes.map((r) => r.major),
+            javaPath: this.readSettings().javaPath || '(未配置，走系统检测)',
+            gameRunning: this.isGameRunning()
+          })
+        }
+      },
+      {
+        name: 'read_crash_log',
+        description: '读取游戏日志（logs/latest.log）的尾部，以及 crash-reports 目录下最新崩溃报告的内容。',
+        parameters: { type: 'object', properties: {} },
+        handler: async () => {
+          const instanceDir = join(this.rootDir, 'instances', 'main')
+          const parts: string[] = []
+          try {
+            const log = await fs.readFile(join(instanceDir, 'logs', 'latest.log'), 'utf8')
+            const lines = log.split('\n')
+            parts.push(`=== logs/latest.log 尾部 ${Math.min(200, lines.length)} 行 ===\n${lines.slice(-200).join('\n')}`)
+          } catch {
+            parts.push('=== logs/latest.log 不存在（游戏尚未运行过） ===')
+          }
+          try {
+            const crashDir = join(instanceDir, 'crash-reports')
+            const reports = (await fs.readdir(crashDir)).filter((f) => f.endsWith('.txt')).sort()
+            if (reports.length > 0) {
+              const latest = reports.at(-1)!
+              const text = await fs.readFile(join(crashDir, latest), 'utf8')
+              parts.push(`=== crash-reports/${latest} 头部 120 行 ===\n${text.split('\n').slice(0, 120).join('\n')}`)
+            }
+          } catch {
+            // 无 crash-reports 目录
+          }
+          return parts.join('\n\n') || '没有任何日志或崩溃报告。'
+        }
+      }
+    ]
+  }
+
+  private aiSystemPrompt(): string {
+    return [
+      '你是 Minecraft 第三方启动器 MCL 的内置助手。',
+      '回答简洁、可操作；涉及版本与运行状态时优先调用工具查询而不是猜测。',
+      '用户环境为 Windows；游戏实例目录在启动器数据目录的 instances/main 下。'
+    ].join('\n')
+  }
+
+  /** 发送一条用户消息：主进程跑完整 tool 循环，流式增量与最终回复经事件推送。 */
+  async aiSend(text: string): Promise<{ content: string }> {
+    if (typeof text !== 'string' || text.trim() === '') throw new Error('empty message')
+    const { ai } = this.readSettings()
+    if (!ai?.baseUrl || !ai?.apiKey || !ai?.model) {
+      throw new Error('请先在 AI 卡片配置 baseURL / apiKey / model')
+    }
+    if (!this.aiSession) {
+      this.aiSession = new ChatSession(this.aiSystemPrompt())
+    }
+    this.aiSession.addUser(text)
+
+    const client = new ChatClient({ baseUrl: ai.baseUrl, apiKey: ai.apiKey, model: ai.model })
+    const result = await client.send(this.aiSession.messages(), this.buildAiTools(), {
+      onDelta: (t) => this.send('event:ai-delta', { text: t })
+    })
+    this.aiSession.addAssistant(result.content)
+    return { content: result.content }
+  }
+
+  aiClear(): void {
+    this.aiSession?.clear()
   }
 }
 

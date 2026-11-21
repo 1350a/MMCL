@@ -29,11 +29,19 @@ const api = {
   readGameLog: () => ipcRenderer.invoke('game:readLog'),
   isGameRunning: () => ipcRenderer.invoke('game:isRunning'),
 
+  getAiConfig: () => ipcRenderer.invoke('ai:getConfig'),
+  setAiConfig: (ai: { baseUrl: string; apiKey: string; model: string }) => ipcRenderer.invoke('ai:setConfig', ai),
+  aiSend: (text: string) => ipcRenderer.invoke('ai:send', text),
+  aiClear: () => ipcRenderer.invoke('ai:clear'),
+
   onInstallProgress: on('event:install-progress'),
   onInstallDone: on('event:install-done'),
   onJavaInstallProgress: on('event:java-install-progress'),
   onGameLog: on('event:game-log'),
-  onGameExit: on('event:game-exit')
+  onGameExit: on('event:game-exit'),
+  onAiDelta: on('event:ai-delta'),
+  onAiDone: on('event:ai-done'),
+  onAiError: on('event:ai-error')
 }
 
 contextBridge.exposeInMainWorld('mcl', api)

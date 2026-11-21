@@ -52,6 +52,25 @@ interface JavaInstallProgressPayload {
   file: string
 }
 
+interface AiConfigPayload {
+  baseUrl: string
+  apiKeyMasked: string
+  model: string
+  configured: boolean
+}
+
+interface AiDeltaPayload {
+  text: string
+}
+
+interface AiDonePayload {
+  content: string
+}
+
+interface AiErrorPayload {
+  message: string
+}
+
 interface MclApi {
   ping: () => Promise<string>
   sha1: (filePath: string) => Promise<string>
@@ -73,11 +92,19 @@ interface MclApi {
   readGameLog: () => Promise<string>
   isGameRunning: () => Promise<boolean>
 
+  getAiConfig: () => Promise<AiConfigPayload>
+  setAiConfig: (ai: { baseUrl: string; apiKey: string; model: string }) => Promise<AiConfigPayload>
+  aiSend: (text: string) => Promise<{ content: string }>
+  aiClear: () => Promise<void>
+
   onInstallProgress: (callback: (payload: InstallProgressPayload) => void) => Unsubscribe
   onInstallDone: (callback: (payload: InstallDonePayload) => void) => Unsubscribe
   onJavaInstallProgress: (callback: (payload: JavaInstallProgressPayload) => void) => Unsubscribe
   onGameLog: (callback: (payload: GameLogPayload) => void) => Unsubscribe
   onGameExit: (callback: (payload: GameExitPayload) => void) => Unsubscribe
+  onAiDelta: (callback: (payload: AiDeltaPayload) => void) => Unsubscribe
+  onAiDone: (callback: (payload: AiDonePayload) => void) => Unsubscribe
+  onAiError: (callback: (payload: AiErrorPayload) => void) => Unsubscribe
 }
 
 interface Window {

@@ -24,8 +24,18 @@ function App() {
   const [gameRunning, setGameRunning] = useState(false)
   const [gameLines, setGameLines] = useState<string[]>([])
   const [message, setMessage] = useState('')
+  // AI 面板
+  const [aiConfig, setAiConfig] = useState<AiConfigPayload | null>(null)
+  const [aiBase, setAiBase] = useState('')
+  const [aiKey, setAiKey] = useState('')
+  const [aiModel, setAiModel] = useState('')
+  const [aiMessages, setAiMessages] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([])
+  const [aiStreaming, setAiStreaming] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiInput, setAiInput] = useState('')
 
   const logRef = useRef<HTMLDivElement>(null)
+  const aiChatRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // 初始状态
@@ -39,6 +49,11 @@ function App() {
     window.mcl.listInstalledVersions().then(setInstalled)
     window.mcl.listRuntimes().then(setRuntimes)
     window.mcl.isGameRunning().then(setGameRunning)
+    window.mcl.getAiConfig().then((c) => {
+      setAiConfig(c)
+      setAiBase(c.baseUrl)
+      setAiModel(c.model)
+    })
 
     const unsubs = [
       window.mcl.onInstallProgress((p) => setProgress(p)),
@@ -63,6 +78,17 @@ function App() {
       window.mcl.onGameExit(({ code }) => {
         setGameRunning(false)
         setGameLines((lines) => [...lines, `--- 游戏退出，退出码 ${code} ---`])
+      }),
+      window.mcl.onAiDelta(({ text }) => {
+        setAiStreaming((s) => s + text)
+      }),
+      window.mcl.onAiDone(() => {
+        setAiStreaming('')
+      }),
+      window.mcl.onAiError(({ message: err }) => {
+        setAiStreaming('')
+        setAiMessages((msgs) => [...msgs, { role: 'assistant', text: `[错误] ${err}` }])
+        setAiBusy(false)
       })
     ]
     return () => unsubs.forEach((u) => u())
@@ -72,6 +98,10 @@ function App() {
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [gameLines])
+
+  useEffect(() => {
+    aiChatRef.current?.scrollTo({ top: aiChatRef.current.scrollHeight })
+  }, [aiMessages, aiStreaming])
 
   async function run(action: () => Promise<void>) {
     try {
@@ -107,6 +137,37 @@ function App() {
       await window.mcl.installVersion(selectedRemote)
       setInstalling(false)
       setProgress(null)
+    })
+
+  const onSaveAiConfig = () =>
+    run(async () => {
+      const saved = await window.mcl.setAiConfig({ baseUrl: aiBase.trim(), apiKey: aiKey.trim(), model: aiModel.trim() })
+      setAiConfig(saved)
+      setAiKey('')
+      setMessage('')
+    })
+
+  const onAiSend = () =>
+    run(async () => {
+      const text = aiInput.trim()
+      if (!text || aiBusy) return
+      setAiInput('')
+      setAiMessages((msgs) => [...msgs, { role: 'user', text }])
+      setAiStreaming('')
+      setAiBusy(true)
+      const { content } = await window.mcl.aiSend(text)
+      setAiStreaming('')
+      setAiMessages((msgs) => [...msgs, { role: 'assistant', text: content }])
+      setAiBusy(false)
+      setMessage('')
+    })
+
+  const onAiClear = () =>
+    run(async () => {
+      await window.mcl.aiClear()
+      setAiMessages([])
+      setAiStreaming('')
+      setMessage('')
     })
 
   const onLaunch = () =>
@@ -230,6 +291,41 @@ function App() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="card">
+        <h2>AI 助手</h2>
+        <div className="ai-config">
+          <input value={aiBase} onChange={(e) => setAiBase(e.target.value)} placeholder="baseURL（如 https://api.deepseek.com）" />
+          <input value={aiKey} onChange={(e) => setAiKey(e.target.value)} placeholder={aiConfig?.apiKeyMasked || 'apiKey'} />
+          <input value={aiModel} onChange={(e) => setAiModel(e.target.value)} placeholder="model（如 deepseek-chat）" />
+          <button onClick={onSaveAiConfig}>保存配置</button>
+        </div>
+        <div className="log ai-chat" ref={aiChatRef}>
+          {aiMessages.length === 0 && !aiStreaming ? '与 AI 助手对话（可让它列版本、分析崩溃日志）…' : (
+            <>
+              {aiMessages.map((m, i) => (
+                <div key={i} className={m.role === 'user' ? 'ai-user' : 'ai-assistant'}>
+                  {m.role === 'user' ? '你' : 'AI'}：{m.text}
+                </div>
+              ))}
+              {aiStreaming && <div className="ai-assistant">AI：{aiStreaming}</div>}
+            </>
+          )}
+        </div>
+        <div className="row">
+          <input
+            value={aiInput}
+            onChange={(e) => setAiInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && onAiSend()}
+            placeholder={aiConfig?.configured ? '向 AI 提问…' : '先配置 baseURL/apiKey/model'}
+            disabled={aiBusy || !aiConfig?.configured}
+          />
+          <button onClick={onAiSend} disabled={aiBusy || !aiInput.trim() || !aiConfig?.configured}>
+            {aiBusy ? '思考中…' : '发送'}
+          </button>
+          <button onClick={onAiClear} disabled={aiBusy}>清空会话</button>
+        </div>
       </section>
 
       {message && <div className="error">{message}</div>}

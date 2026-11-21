@@ -181,6 +181,23 @@ select:focus {
   flex: 1;
 }
 
+.ai-config {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.ai-chat .ai-user {
+  color: #5eead4;
+  margin-bottom: 6px;
+}
+
+.ai-chat .ai-assistant {
+  color: #c7cdd8;
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+}
+
 .log {
   margin-top: 12px;
   height: 200px;

@@ -16,7 +16,7 @@
 | 仓库位置 | `C:\Users\Mac\Project\mcl`（2026-11-18 从 DSH 工作区迁入） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
 | Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
-| 当前阶段 | **M1 代码完成**（core 侧真实冒烟通过；UI 端到端验收待桌面执行） |
+| 当前阶段 | **M2 代码完成**（Java 运行时自动管理 + AI 面板；桌面端到端验收进行中） |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
 ---
@@ -110,7 +110,12 @@
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| M2 | Java 运行时自动管理（Temurin）+ AI 面板 MVP | 可配 key 对话、读崩溃日志、报版本状态 |
+| M2 | Java 运行时自动管理（Temurin）+ AI 面板 MVP | 可配 key 对话、读崩溃日志、报版本状态 | 
+
+> **M2 实现记录（2026-11-21）**：
+> - **Java 运行时**：`packages/core/src/runtime.ts` —— Adoptium API（Temurin JRE，sha256 校验复用 `downloadFile` 自愈）→ `extractZip`（自 extractNatives 抽出，带 zip-slip 防护）→ 顶层目录提升到 `runtimes/java-<major>/` → `java -version` 自检 → `.install-ok` 标记。**内置运行时不写任何环境变量**（用户决策）；启动 Java 解析顺序 = 手动路径 → 系统检测 → 内置 runtime，缺失时 UI 引导一键下载。Adoptium Java 16 无 JRE GA（实测空数组），验收版本用 1.20.1（Java 17）。
+> - **AI 面板**：新包 `packages/agent`（CJS 对齐 core，禁 electron/react）—— OpenAI 兼容 chat completions 自实现 fetch + SSE + function calling 循环（`client.ts`）、内存会话（`session.ts`，MVP 不落盘）、`AiTool` 形态预留 MCP 对齐。launcher 注入两个工具：`list_versions`（已装版本/内置 runtime/运行状态）、`read_crash_log`（latest.log 尾部 200 行 + crash-reports 最新一份）。设置三字段 baseURL/apiKey/model 存 settings.json（UI 回显掩码）。
+> - 测试 59/59（core 53 + agent 6）。
 | M3 | 外置登录（authlib-injector 协议） | 登录/刷新/拉皮肤 |
 | M4 | 智能体操作（工具调用）+ mod 加载器 | AI 装 mod / 改配置 / 启动游戏 |
 | M5 | 扩展系统（QuickJS 沙箱） | AI 生成扩展并热加载 |
