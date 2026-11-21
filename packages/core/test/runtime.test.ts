@@ -52,8 +52,8 @@ describe('extractZip', () => {
 })
 
 describe('installRuntime', () => {
-  /** Adoptium API + zip 下载的本地 fixture。 */
-  async function startAdoptiumFixture(zip: Buffer, emptyGA = false): Promise<string> {
+  /** Adoptium API + zip 下载的本地 fixture；officialBroken=true 时官方 zip 路由 404，镜像路由可用。 */
+  async function startAdoptiumFixture(zip: Buffer, emptyGA = false, officialBroken = false): Promise<string> {
     const server = createServer((req, res) => {
       if (req.url?.startsWith('/assets/')) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -62,7 +62,14 @@ describe('installRuntime', () => {
           : [
               {
                 version: { major: 17 },
-                binary: { package: { link: 'http://unused/jre.zip', size: zip.length, checksum: sha256(zip) } }
+                binary: {
+                  package: {
+                    name: 'OpenJDK17U-jre_x64_windows_hotspot_17.0.9.1_2.zip',
+                    link: 'http://unused/jre.zip',
+                    size: zip.length,
+                    checksum: sha256(zip)
+                  }
+                }
               }
             ]
         // 把 package.link 换成本地地址
@@ -73,7 +80,12 @@ describe('installRuntime', () => {
         res.end(JSON.stringify(body))
         return
       }
-      if (req.url === '/jre.zip') {
+      if (req.url === '/jre.zip' && !officialBroken) {
+        res.writeHead(200, { 'Content-Length': String(zip.length) })
+        res.end(zip)
+        return
+      }
+      if (officialBroken && /^\/mirror\/17\/jre\/x64\/windows\//.test(req.url ?? '')) {
         res.writeHead(200, { 'Content-Length': String(zip.length) })
         res.end(zip)
         return
@@ -121,6 +133,21 @@ describe('installRuntime', () => {
 
     const runtimes = await listInstalledRuntimes(root)
     expect(runtimes).toEqual([])
+  })
+
+  it('官方源失败自动回退清华镜像（官方 404 → 镜像命中，sha256 沿用 API 值）', async () => {
+    const zip = makeRuntimeZip('jdk-17.0.9.1-jre')
+    const apiBase = await startAdoptiumFixture(zip, false, true)
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-runtime-'))
+
+    const info = await installRuntime(root, 17, {
+      apiBaseUrl: apiBase,
+      mirrorBaseUrl: apiBase.replace('/assets', '/mirror'),
+      probe: okProbe(17)
+    })
+    expect(info.major).toBe(17)
+    expect(await fs.readFile(join(root, 'runtimes', 'java-17', 'bin', 'java.exe'))).toEqual(Buffer.from('fake-java-binary'))
+    await expect(fs.access(join(root, 'runtimes', 'java-17', '.install-ok'))).resolves.toBeUndefined()
   })
 
   it('Adoptium 无 GA（空数组）→ 抛清晰错误', async () => {

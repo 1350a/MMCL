@@ -1,12 +1,15 @@
 import { promises as fs, type Dirent } from 'node:fs'
 import { join } from 'node:path'
 import { platform } from 'node:process'
-import { downloadFile } from './download'
+import { describeFetchError, downloadFile } from './download'
 import { extractZip } from './zip'
 import { probeJava, type JavaInfo } from './java'
 
 /** Adoptium API 资产查询地址（Temurin，GPLv2+Classpath Exception，可再分发）。 */
 export const ADOPTIUM_ASSETS_URL = 'https://api.adoptium.net/v3/assets/latest'
+
+/** 清华 TUNA 镜像（Adoptium 官方目录结构），官方源（GitHub releases）失败时回退。 */
+export const TUNA_ADOPTIUM_URL = 'https://mirrors.tuna.tsinghua.edu.cn/Adoptium'
 
 /** 内置运行时根目录：<rootDir>/runtimes/java-<major>/，不写环境变量。 */
 const RUNTIMES_DIR = 'runtimes'
@@ -29,6 +32,8 @@ export interface RuntimeProgress {
 export interface RuntimeInstallOptions {
   /** Adoptium API 地址（测试可指向本地 fixture）。 */
   apiBaseUrl?: string
+  /** 镜像根地址（默认清华 TUNA），URL 模式 <mirror>/<major>/jre/x64/windows/<package.name>。 */
+  mirrorBaseUrl?: string
   onProgress?: (p: RuntimeProgress) => void
   signal?: AbortSignal
   /** 解压后自检实现（默认真实执行 java -version；测试注入）。 */
@@ -109,7 +114,7 @@ export async function installRuntime(
   if (!Number.isInteger(major) || major < 8) {
     throw new Error(`invalid java major version: ${major}`)
   }
-  const { apiBaseUrl = ADOPTIUM_ASSETS_URL, onProgress, signal } = options
+  const { apiBaseUrl = ADOPTIUM_ASSETS_URL, mirrorBaseUrl = TUNA_ADOPTIUM_URL, onProgress, signal } = options
   const probe = options.probe ?? probeJava
   const runtimesRoot = join(rootDir, RUNTIMES_DIR)
   const targetDir = join(runtimesRoot, `java-${major}`)
@@ -124,11 +129,24 @@ export async function installRuntime(
     const pkg = await fetchRuntimePackage(apiBaseUrl, major, signal)
     const zipPath = join(stagingDir, pkg.name || 'runtime.zip')
     onProgress?.({ phase: 'download', completed: 0, total: 1, file: pkg.name })
-    await downloadFile(pkg.link, zipPath, {
-      checksum: pkg.checksum,
-      algorithm: 'sha256',
-      signal
-    })
+    try {
+      await downloadFile(pkg.link, zipPath, {
+        checksum: pkg.checksum,
+        algorithm: 'sha256',
+        signal
+      })
+    } catch (err) {
+      if (signal?.aborted) throw err
+      // 官方源（GitHub releases）失败（网络/劫持/404 等）→ 回退清华镜像，校验和仍沿用 API 的 sha256
+      const mirrorUrl = `${mirrorBaseUrl}/${major}/jre/x64/windows/${pkg.name}`
+      try {
+        await downloadFile(mirrorUrl, zipPath, { checksum: pkg.checksum, algorithm: 'sha256', signal })
+      } catch (mirrorErr) {
+        throw new Error(
+          `下载 Java ${major} 运行时失败 — 官方源: ${describeFetchError(err)}；清华镜像: ${describeFetchError(mirrorErr)}`
+        )
+      }
+    }
 
     // 解压到 staging，然后把唯一顶层目录内容提升为 targetDir
     const extractDir = join(stagingDir, 'extract')

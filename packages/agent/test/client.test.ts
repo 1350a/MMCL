@@ -112,11 +112,16 @@ describe('ChatClient.send', () => {
     await expect(client.send([{ role: 'user', content: 'x' }])).rejects.toThrow(/HTTP 500/)
   })
 
-  it('baseUrl 带不带 /v1 都能正确拼出 endpoint', async () => {
-    for (const base of ['http://x', 'http://x/v1', 'http://x/v1/']) {
+  it('baseUrl 原样作为前缀拼 endpoint（不强插 /v1）', async () => {
+    const cases: Array<[string, string]> = [
+      ['http://x', 'http://x/chat/completions'],
+      ['http://x/v1', 'http://x/v1/chat/completions'],
+      ['http://x/v4/', 'http://x/v4/chat/completions']
+    ]
+    for (const [base, expected] of cases) {
       const client = new ChatClient({ baseUrl: base, apiKey: 'k', model: 'm' })
       // @ts-expect-error 访问私有方法仅用于测试
-      expect(client.url()).toBe('http://x/v1/chat/completions')
+      expect(client.url()).toBe(expected)
     }
   })
 })

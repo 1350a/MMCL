@@ -38,9 +38,9 @@ export class ChatClient {
   constructor(private readonly options: ChatClientOptions) {}
 
   private url(): string {
+    // baseURL 原样作为前缀（用户填 /v1、/v4 等各自兼容层的习惯不一），不强插版本段
     const base = this.options.baseUrl.replace(/\/+$/, '')
-    // 兼容填到 /v1 与填到根的两种 baseURL 习惯
-    return base.endsWith('/v1') ? `${base}/chat/completions` : `${base}/v1/chat/completions`
+    return `${base}/chat/completions`
   }
 
   /**

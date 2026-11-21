@@ -129,6 +129,32 @@ describe('downloadFile', () => {
     expect(await exists(`${dest}.part`)).toBe(false)
   })
 
+  it('网络中断（terminated）自动重试后成功', async () => {
+    const payload = randomBytes(256 * 1024)
+    let broken = true
+    const server = createServer((req, res) => {
+      if (broken) {
+        broken = false
+        res.writeHead(200, { 'Content-Length': String(payload.length) })
+        res.write(payload.subarray(0, 1024))
+        setTimeout(() => res.destroy(), 30) // 声明全长但中途断开 → undici 'terminated'
+        return
+      }
+      res.writeHead(200, { 'Content-Length': String(payload.length) })
+      res.end(payload)
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    servers.push(server)
+    const { port } = server.address() as AddressInfo
+
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    const dest = join(dir, 'file.bin')
+    await downloadFile(`http://127.0.0.1:${port}/file.bin`, dest, { checksum: sha1(payload) })
+
+    expect(await fs.readFile(dest)).toEqual(payload)
+    expect(await exists(`${dest}.part`)).toBe(false)
+  })
+
   it('404 抛出 HttpError', async () => {
     const fixture = await startFixture(128)
     servers.push(fixture.server)
