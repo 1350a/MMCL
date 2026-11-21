@@ -31,7 +31,7 @@ export function parseJavaVersionText(text: string): { majorVersion: number; raw:
 }
 
 /** 运行 `<java> -version` 解析版本（输出去 stderr）。 */
-function probeJava(javaPath: string): Promise<JavaInfo> {
+export function probeJava(javaPath: string): Promise<JavaInfo> {
   return new Promise((resolve, reject) => {
     execFile(javaPath, ['-version'], { timeout: 30_000 }, (err, _stdout, stderr) => {
       if (err) {

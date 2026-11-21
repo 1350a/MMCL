@@ -79,6 +79,8 @@ function registerIpc(): void {
   ipcMain.handle('version:listRemote', () => service.listRemoteVersions())
   ipcMain.handle('version:listInstalled', () => service.listInstalledVersions())
   ipcMain.handle('version:install', (_e, id: string) => service.installVersion(id))
+  ipcMain.handle('java:listRuntimes', () => service.listRuntimes())
+  ipcMain.handle('java:installRuntime', (_e, major: number) => service.installRuntimeFor(major))
   ipcMain.handle('game:launch', (_e, id: string) => service.launchVersion(id))
   ipcMain.handle('game:stop', () => service.stopGame())
   ipcMain.handle('game:readLog', () => service.readGameLog())

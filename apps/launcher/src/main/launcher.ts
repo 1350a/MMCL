@@ -8,14 +8,18 @@ import {
   fetchVersionJson,
   fetchVersionManifest,
   findVersionEntry,
+  installRuntime,
   installVersion,
+  JavaVersionMismatchError,
   launchGame,
+  listInstalledRuntimes,
   loadAccounts,
   mergeVersionJson,
+  pickRuntime,
   saveAccounts,
   validatePlayerName
 } from '@mcl/core'
-import type { Account, JavaInfo, VersionJson, VersionManifest } from '@mcl/core'
+import type { Account, RuntimeInfo, JavaInfo, VersionJson, VersionManifest } from '@mcl/core'
 
 export interface RemoteVersion {
   id: string
@@ -38,6 +42,7 @@ export class LauncherService {
   private readonly settingsPath: string
   private manifest: VersionManifest | null = null
   private installing = false
+  private javaInstalling = false
   /** 当前游戏进程与对应版本 id（单实例）。 */
   private game: { handle: { process: ChildProcess; logFile: string }; versionId: string } | null = null
   private logBuffer: string[] = []
@@ -186,9 +191,7 @@ export class LauncherService {
     if (!account) throw new Error('请先创建离线账户')
     const versionJson = await this.loadInstalledVersionJson(id)
 
-    const { javaPath } = this.readSettings()
-    const java = await detectJava(javaPath || undefined)
-    assertJavaCompatible(java, versionJson)
+    const java = await this.resolveJava(versionJson)
 
     const instanceDir = join(this.rootDir, 'instances', 'main')
     const spec = assembleLaunch(versionJson, {
@@ -215,6 +218,50 @@ export class LauncherService {
     })
     this.game = { handle, versionId: id }
     return { logFile: handle.logFile }
+  }
+
+  /**
+   * Java 解析顺序：手动配置路径（detectJava 内部回退 JAVA_HOME/PATH）→ 版本不符时
+   * 用内置 runtime（pickRuntime 取满足 major 的最小版本）→ 都没有则抛引导错误。
+   */
+  private async resolveJava(versionJson: VersionJson): Promise<JavaInfo> {
+    const { javaPath } = this.readSettings()
+    const java = await detectJava(javaPath || undefined)
+    try {
+      assertJavaCompatible(java, versionJson)
+      return java
+    } catch (err) {
+      if (!(err instanceof JavaVersionMismatchError)) throw err
+      const required = err.requiredMajorVersion
+      const runtimes = await listInstalledRuntimes(this.rootDir)
+      const builtin = pickRuntime(runtimes, required)
+      if (builtin) {
+        return { path: builtin.javaPath, majorVersion: builtin.major, raw: `builtin-${builtin.major}` }
+      }
+      throw new Error(
+        `启动 ${versionJson.id} 需要 Java ${required}：请在 Java 卡片一键下载内置运行时（约 45MB），或手动配置对应版本的 javaPath`
+      )
+    }
+  }
+
+  /** 内置运行时列表。 */
+  listRuntimes(): Promise<RuntimeInfo[]> {
+    return listInstalledRuntimes(this.rootDir)
+  }
+
+  /** 下载内置 Java 运行时（Temurin JRE，约 45MB），进度经事件推送。 */
+  async installRuntimeFor(major: number): Promise<RuntimeInfo> {
+    if (!Number.isInteger(major) || major < 8) throw new Error(`invalid java major: ${major}`)
+    if (this.javaInstalling) throw new Error('已有运行时下载在进行中')
+    this.javaInstalling = true
+    try {
+      const info = await installRuntime(this.rootDir, major, {
+        onProgress: (p) => this.send('event:java-install-progress', p)
+      })
+      return info
+    } finally {
+      this.javaInstalling = false
+    }
   }
 
   stopGame(): void {

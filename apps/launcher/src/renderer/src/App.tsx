@@ -9,6 +9,9 @@ function App() {
   const [javaPath, setJavaPath] = useState('')
   const [javaInput, setJavaInput] = useState('')
   const [javaInfo, setJavaInfo] = useState<string>('')
+  const [runtimes, setRuntimes] = useState<RuntimeInfoPayload[]>([])
+  const [javaDl, setJavaDl] = useState<JavaInstallProgressPayload | null>(null)
+  const [needJavaMajor, setNeedJavaMajor] = useState<number | null>(null)
   // 版本
   const [remoteVersions, setRemoteVersions] = useState<RemoteVersion[]>([])
   const [installed, setInstalled] = useState<string[]>([])
@@ -34,10 +37,12 @@ function App() {
     })
     window.mcl.listRemoteVersions().then(setRemoteVersions)
     window.mcl.listInstalledVersions().then(setInstalled)
+    window.mcl.listRuntimes().then(setRuntimes)
     window.mcl.isGameRunning().then(setGameRunning)
 
     const unsubs = [
       window.mcl.onInstallProgress((p) => setProgress(p)),
+      window.mcl.onJavaInstallProgress((p) => setJavaDl(p)),
       window.mcl.onInstallDone((p) => {
         setInstalling(false)
         setProgress(null)
@@ -72,7 +77,10 @@ function App() {
     try {
       await action()
     } catch (error) {
-      setMessage((error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+      const raw = (error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+      const need = /需要 Java (\d+)/.exec(raw)
+      if (need) setNeedJavaMajor(Number(need[1]))
+      setMessage(raw)
     }
   }
 
@@ -104,9 +112,21 @@ function App() {
   const onLaunch = () =>
     run(async () => {
       setGameLines([])
+      setNeedJavaMajor(null)
       await window.mcl.launchGame(selectedInstalled)
       setGameRunning(true)
       setMessage('')
+    })
+
+  const onInstallRuntime = () =>
+    run(async () => {
+      if (needJavaMajor === null) return
+      setMessage('')
+      await window.mcl.installRuntime(needJavaMajor)
+      setJavaDl(null)
+      setNeedJavaMajor(null)
+      window.mcl.listRuntimes().then(setRuntimes)
+      setMessage(`Java ${needJavaMajor} 内置运行时已就绪，请再点一次启动`)
     })
 
   const releases = remoteVersions.filter((v) => v.type === 'release')
@@ -143,6 +163,9 @@ function App() {
           <button onClick={onSaveJava}>保存并探测</button>
         </div>
         {javaInfo && <div className="result">{javaInfo}</div>}
+        <div className="result">
+          内置运行时:{runtimes.length ? runtimes.map((r) => `Java ${r.major}`).join('、') : '（无，启动高版本时按引导下载）'}
+        </div>
       </section>
 
       <section className="card">
@@ -197,6 +220,16 @@ function App() {
         <div className="log" ref={logRef}>
           {gameLines.length === 0 ? '游戏日志将显示在这里…' : gameLines.map((line, i) => <div key={i}>{line}</div>)}
         </div>
+        {needJavaMajor !== null && (
+          <div className="java-need">
+            <span>启动该版本需要 Java {needJavaMajor}（内置运行时约 45MB，不写入系统环境变量）</span>
+            <button onClick={onInstallRuntime} disabled={!!javaDl}>
+              {javaDl
+                ? `${javaDl.phase === 'download' ? '下载' : '解压'} ${javaDl.completed}/${javaDl.total}`
+                : `下载 Java ${needJavaMajor}`}
+            </button>
+          </div>
+        )}
       </section>
 
       {message && <div className="error">{message}</div>}

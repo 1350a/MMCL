@@ -40,6 +40,18 @@ interface GameExitPayload {
 
 type Unsubscribe = () => void
 
+interface RuntimeInfoPayload {
+  major: number
+  javaPath: string
+}
+
+interface JavaInstallProgressPayload {
+  phase: 'download' | 'extract'
+  completed: number
+  total: number
+  file: string
+}
+
 interface MclApi {
   ping: () => Promise<string>
   sha1: (filePath: string) => Promise<string>
@@ -53,6 +65,9 @@ interface MclApi {
   listInstalledVersions: () => Promise<string[]>
   installVersion: (id: string) => Promise<void>
 
+  listRuntimes: () => Promise<RuntimeInfoPayload[]>
+  installRuntime: (major: number) => Promise<RuntimeInfoPayload>
+
   launchGame: (id: string) => Promise<{ logFile: string }>
   stopGame: () => Promise<void>
   readGameLog: () => Promise<string>
@@ -60,6 +75,7 @@ interface MclApi {
 
   onInstallProgress: (callback: (payload: InstallProgressPayload) => void) => Unsubscribe
   onInstallDone: (callback: (payload: InstallDonePayload) => void) => Unsubscribe
+  onJavaInstallProgress: (callback: (payload: JavaInstallProgressPayload) => void) => Unsubscribe
   onGameLog: (callback: (payload: GameLogPayload) => void) => Unsubscribe
   onGameExit: (callback: (payload: GameExitPayload) => void) => Unsubscribe
 }

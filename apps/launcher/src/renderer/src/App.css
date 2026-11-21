@@ -164,6 +164,23 @@ select:focus {
   word-break: break-all;
 }
 
+.java-need {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.java-need span {
+  flex: 1;
+}
+
 .log {
   margin-top: 12px;
   height: 200px;

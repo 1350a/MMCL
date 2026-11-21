@@ -4,6 +4,7 @@ import { basename, join } from 'node:path'
 import { downloadFile } from './download'
 import { verifyFile } from './verify'
 import { evaluateRules, type RuleContext } from './rules'
+import { extractZip } from './zip'
 import type { Library, VersionJson } from './version'
 
 /** 资源对象下载域名（URL 模式：<前2位hex>/<sha1>）。 */
@@ -175,19 +176,9 @@ function collectLibraryTasks(lib: Library, ctx: RuleContext, rootDir: string): D
   return tasks
 }
 
-/** 解压 natives jar 到目标目录（排除 META-INF 与 extract.exclude），解压前清空目录。 */
+/** 解压单个 natives jar 到目标目录（排除 META-INF 与 extract.exclude）。目录清理由调用方负责。 */
 export async function extractNatives(nativesJarPath: string, destDir: string, exclude: string[]): Promise<void> {
-  await fs.mkdir(destDir, { recursive: true })
-  const zip = new AdmZip(nativesJarPath)
-  for (const entry of zip.getEntries()) {
-    const name = entry.entryName
-    if (entry.isDirectory) continue
-    if (exclude.some((prefix) => name.startsWith(prefix))) continue
-    // zip 条目名一律用 '/' 分隔，写盘时按平台路径展开
-    const target = join(destDir, ...name.split('/'))
-    await fs.mkdir(join(target, '..'), { recursive: true })
-    await fs.writeFile(target, entry.getData())
-  }
+  await extractZip(nativesJarPath, destDir, { exclude })
 }
 
 /** 安装一个版本：client jar、libraries（含 natives 解压）、assets。返回启动装配所需路径。 */

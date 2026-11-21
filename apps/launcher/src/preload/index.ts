@@ -21,6 +21,9 @@ const api = {
   listInstalledVersions: () => ipcRenderer.invoke('version:listInstalled'),
   installVersion: (id: string) => ipcRenderer.invoke('version:install', id),
 
+  listRuntimes: () => ipcRenderer.invoke('java:listRuntimes'),
+  installRuntime: (major: number) => ipcRenderer.invoke('java:installRuntime', major),
+
   launchGame: (id: string) => ipcRenderer.invoke('game:launch', id),
   stopGame: () => ipcRenderer.invoke('game:stop'),
   readGameLog: () => ipcRenderer.invoke('game:readLog'),
@@ -28,6 +31,7 @@ const api = {
 
   onInstallProgress: on('event:install-progress'),
   onInstallDone: on('event:install-done'),
+  onJavaInstallProgress: on('event:java-install-progress'),
   onGameLog: on('event:game-log'),
   onGameExit: on('event:game-exit')
 }
