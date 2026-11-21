@@ -75,7 +75,8 @@ export class ChatClient {
       })
       if (!res.ok) {
         const text = await res.text().catch(() => '')
-        throw new Error(`chat completions failed: HTTP ${res.status} ${text.slice(0, 300)}`)
+        const hint = res.status === 401 || res.status === 403 ? '（apiKey 无效或已过期，请检查 AI 配置）' : ''
+        throw new Error(`chat completions failed: HTTP ${res.status}${hint} ${text.slice(0, 300)}`)
       }
       if (!res.body) throw new Error('empty response body')
 

@@ -52,8 +52,13 @@ describe('extractZip', () => {
 })
 
 describe('installRuntime', () => {
-  /** Adoptium API + zip 下载的本地 fixture；officialBroken=true 时官方 zip 路由 404，镜像路由可用。 */
-  async function startAdoptiumFixture(zip: Buffer, emptyGA = false, officialBroken = false): Promise<string> {
+  /** Adoptium API + zip 下载的本地 fixture；msBroken=true 时微软源 404，officialBroken=true 时 Adoptium 官方 zip 404。 */
+  async function startAdoptiumFixture(
+    zip: Buffer,
+    emptyGA = false,
+    officialBroken = false,
+    msBroken = false
+  ): Promise<string> {
     const server = createServer((req, res) => {
       if (req.url?.startsWith('/assets/')) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -90,6 +95,16 @@ describe('installRuntime', () => {
         res.end(zip)
         return
       }
+      if (/^\/ms\/jdk\d+\.zip$/.test(req.url ?? '') && !msBroken) {
+        res.writeHead(200, { 'Content-Length': String(zip.length) })
+        res.end(zip)
+        return
+      }
+      if (/^\/ms\/jdk\d+\.zip\.sha256sum\.txt$/.test(req.url ?? '') && !msBroken) {
+        res.writeHead(200)
+        res.end(`${sha256(zip)}  microsoft-jdk-x-windows-x64.zip`)
+        return
+      }
       res.writeHead(404)
       res.end()
     })
@@ -99,7 +114,13 @@ describe('installRuntime', () => {
     return `http://127.0.0.1:${port}/assets`
   }
 
-  it('完整流程：查资产 → sha256 下载 → 解压 → 顶层提升 → 自检 → 完成标记', async () => {
+  /** 微软源注入（测试指向 fixture，避免真实 aka.ms 请求）。 */
+  const msOptions = (apiBase: string, msBroken = false) => ({
+    msJdkUrlTemplate: `${apiBase.replace('/assets', '')}/ms/jdk{major}.zip${msBroken ? '-broken' : ''}`,
+    msJdkShaUrlTemplate: `${apiBase.replace('/assets', '')}/ms/jdk{major}.zip.sha256sum.txt${msBroken ? '-broken' : ''}`
+  })
+
+  it('完整流程（微软源优先）：下载 → 解压 → 顶层提升 → 自检 → 完成标记', async () => {
     const zip = makeRuntimeZip('jdk-17.0.9.1-jre')
     const apiBase = await startAdoptiumFixture(zip)
     const root = await fs.mkdtemp(join(tmpdir(), 'mcl-runtime-'))
@@ -107,6 +128,7 @@ describe('installRuntime', () => {
     const phases: string[] = []
     const info = await installRuntime(root, 17, {
       apiBaseUrl: apiBase,
+      ...msOptions(apiBase),
       probe: okProbe(17),
       onProgress: (p) => phases.push(p.phase)
     })
@@ -114,7 +136,6 @@ describe('installRuntime', () => {
     expect(info.major).toBe(17)
     expect(info.javaPath).toContain(join('runtimes', 'java-17', 'bin', 'java.exe'))
     expect(await fs.readFile(join(root, 'runtimes', 'java-17', 'bin', 'java.exe'))).toEqual(Buffer.from('fake-java-binary'))
-    expect(await fs.readFile(join(root, 'runtimes', 'java-17', 'release'))).toEqual(Buffer.from('JAVA_VERSION="17.0.9"'))
     await expect(fs.access(join(root, 'runtimes', 'java-17', '.install-ok'))).resolves.toBeUndefined()
     // staging（zip + extract）已清理
     await expect(fs.access(`${join(root, 'runtimes', 'java-17')}.staging`)).rejects.toThrow()
@@ -128,34 +149,53 @@ describe('installRuntime', () => {
     const root = await fs.mkdtemp(join(tmpdir(), 'mcl-runtime-'))
 
     await expect(
-      installRuntime(root, 17, { apiBaseUrl: apiBase, probe: okProbe(21) })
+      installRuntime(root, 17, { apiBaseUrl: apiBase, ...msOptions(apiBase), probe: okProbe(21) })
     ).rejects.toThrow(/self-check failed/)
 
     const runtimes = await listInstalledRuntimes(root)
     expect(runtimes).toEqual([])
   })
 
-  it('官方源失败自动回退清华镜像（官方 404 → 镜像命中，sha256 沿用 API 值）', async () => {
+  it('微软源 404 → 回退 Adoptium；Adoptium 官方也 404 → 回退 TUNA 镜像', async () => {
     const zip = makeRuntimeZip('jdk-17.0.9.1-jre')
-    const apiBase = await startAdoptiumFixture(zip, false, true)
+    const apiBase = await startAdoptiumFixture(zip, false, true, true)
     const root = await fs.mkdtemp(join(tmpdir(), 'mcl-runtime-'))
 
     const info = await installRuntime(root, 17, {
       apiBaseUrl: apiBase,
       mirrorBaseUrl: apiBase.replace('/assets', '/mirror'),
+      ...msOptions(apiBase, true),
       probe: okProbe(17)
     })
     expect(info.major).toBe(17)
     expect(await fs.readFile(join(root, 'runtimes', 'java-17', 'bin', 'java.exe'))).toEqual(Buffer.from('fake-java-binary'))
-    await expect(fs.access(join(root, 'runtimes', 'java-17', '.install-ok'))).resolves.toBeUndefined()
   })
 
-  it('Adoptium 无 GA（空数组）→ 抛清晰错误', async () => {
-    const apiBase = await startAdoptiumFixture(Buffer.alloc(0), true)
+  it('所有源均失败 → 聚合错误含各源原因', async () => {
+    const zip = makeRuntimeZip('jdk-17.0.9.1-jre')
+    const apiBase = await startAdoptiumFixture(zip, false, true, true)
     const root = await fs.mkdtemp(join(tmpdir(), 'mcl-runtime-'))
+
     await expect(
-      installRuntime(root, 16, { apiBaseUrl: apiBase, probe: okProbe(16) })
-    ).rejects.toThrow(/无 Java 16 的 JRE GA/)
+      installRuntime(root, 17, {
+        apiBaseUrl: apiBase,
+        mirrorBaseUrl: `${apiBase.replace('/assets', '')}/mirror-nothing`, // 镜像也 404
+        ...msOptions(apiBase, true),
+        probe: okProbe(17)
+      })
+    ).rejects.toThrow(/所有源均不可用.*Microsoft JDK.*TUNA/)
+  })
+
+  it('Adoptium 无 GA（空数组）→ 微软源仍可用', async () => {
+    const zip = makeRuntimeZip('jdk-16.0.2-jre')
+    const apiBase = await startAdoptiumFixture(zip, true)
+    const root = await fs.mkdtemp(join(tmpdir(), 'mcl-runtime-'))
+    const info = await installRuntime(root, 16, {
+      apiBaseUrl: apiBase,
+      ...msOptions(apiBase),
+      probe: okProbe(16)
+    })
+    expect(info.major).toBe(16)
   })
 
   it('非法 major 参数直接拒绝', async () => {

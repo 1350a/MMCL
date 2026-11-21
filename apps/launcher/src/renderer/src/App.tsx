@@ -155,11 +155,15 @@ function App() {
       setAiMessages((msgs) => [...msgs, { role: 'user', text }])
       setAiStreaming('')
       setAiBusy(true)
-      const { content } = await window.mcl.aiSend(text)
-      setAiStreaming('')
-      setAiMessages((msgs) => [...msgs, { role: 'assistant', text: content }])
-      setAiBusy(false)
-      setMessage('')
+      try {
+        const { content } = await window.mcl.aiSend(text)
+        setAiMessages((msgs) => [...msgs, { role: 'assistant', text: content }])
+        setMessage('')
+      } finally {
+        // 失败（401/网络等）也必须恢复输入状态；错误文本经 onAiError 事件展示
+        setAiBusy(false)
+        setAiStreaming('')
+      }
     })
 
   const onAiClear = () =>

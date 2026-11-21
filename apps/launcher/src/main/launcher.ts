@@ -393,11 +393,19 @@ export class LauncherService {
     this.aiSession.addUser(text)
 
     const client = new ChatClient({ baseUrl: ai.baseUrl, apiKey: ai.apiKey, model: ai.model })
-    const result = await client.send(this.aiSession.messages(), this.buildAiTools(), {
-      onDelta: (t) => this.send('event:ai-delta', { text: t })
-    })
-    this.aiSession.addAssistant(result.content)
-    return { content: result.content }
+    try {
+      const result = await client.send(this.aiSession.messages(), this.buildAiTools(), {
+        onDelta: (t) => this.send('event:ai-delta', { text: t })
+      })
+      this.aiSession.addAssistant(result.content)
+      return { content: result.content }
+    } catch (err) {
+      // 失败也要通知 UI 恢复输入状态（401/网络错误等），并回退本条用户消息
+      const message = err instanceof Error ? err.message : String(err)
+      this.send('event:ai-error', { message })
+      this.aiSession.messages().pop() // 移除刚加的 user 消息，会话不留悬空
+      throw err
+    }
   }
 
   aiClear(): void {

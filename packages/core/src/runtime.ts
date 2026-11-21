@@ -11,6 +11,10 @@ export const ADOPTIUM_ASSETS_URL = 'https://api.adoptium.net/v3/assets/latest'
 /** 清华 TUNA 镜像（Adoptium 官方目录结构），官方源（GitHub releases）失败时回退。 */
 export const TUNA_ADOPTIUM_URL = 'https://mirrors.tuna.tsinghua.edu.cn/Adoptium'
 
+/** Microsoft Build of OpenJDK（MIT 许可）固定短链，仅 Windows；微软只发 JDK 无独立 JRE。 */
+export const MS_JDK_URL_TEMPLATE = 'https://aka.ms/download-jdk/microsoft-jdk-{major}-windows-x64.zip'
+export const MS_JDK_SHA_URL_TEMPLATE = 'https://aka.ms/download-jdk/microsoft-jdk-{major}-windows-x64.zip.sha256sum.txt'
+
 /** 内置运行时根目录：<rootDir>/runtimes/java-<major>/，不写环境变量。 */
 const RUNTIMES_DIR = 'runtimes'
 const INSTALL_OK_MARKER = '.install-ok'
@@ -34,10 +38,67 @@ export interface RuntimeInstallOptions {
   apiBaseUrl?: string
   /** 镜像根地址（默认清华 TUNA），URL 模式 <mirror>/<major>/jre/x64/windows/<package.name>。 */
   mirrorBaseUrl?: string
+  /** 微软 JDK 短链模板根（测试可指向本地 fixture），占位符 {major}。 */
+  msJdkUrlTemplate?: string
+  /** 微软 JDK sha256 文件模板根（测试用）。 */
+  msJdkShaUrlTemplate?: string
   onProgress?: (p: RuntimeProgress) => void
   signal?: AbortSignal
   /** 解压后自检实现（默认真实执行 java -version；测试注入）。 */
   probe?: (javaPath: string) => Promise<JavaInfo>
+}
+
+/** 单个下载源。 */
+interface RuntimeSource {
+  label: string
+  url: string
+  sha256?: string
+}
+
+/** 微软 sha256sum.txt 格式：`<64位hex>  <文件名>`，取首行第一段。 */
+async function fetchMsSha256(major: number, template: string, signal?: AbortSignal): Promise<string | undefined> {
+  try {
+    const res = await fetch(template.replace('{major}', String(major)), { signal })
+    if (!res.ok) return undefined
+    const text = await res.text()
+    return /([a-f0-9]{64})/i.exec(text)?.[1]
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 构建下载源列表（按优先级）：
+ * Windows 上 Microsoft JDK（MIT，aka.ms 固定短链，直连可达）优先；
+ * 其次 Adoptium/Temurin JRE（GitHub）与清华 TUNA 镜像。API 无 GA 时后两者跳过。
+ */
+async function resolveRuntimeSources(
+  major: number,
+  options: RuntimeInstallOptions,
+  signal?: AbortSignal
+): Promise<RuntimeSource[]> {
+  const sources: RuntimeSource[] = []
+  if (platform === 'win32') {
+    const template = options.msJdkUrlTemplate ?? MS_JDK_URL_TEMPLATE
+    const shaTemplate = options.msJdkShaUrlTemplate ?? MS_JDK_SHA_URL_TEMPLATE
+    sources.push({
+      label: 'Microsoft JDK',
+      url: template.replace('{major}', String(major)),
+      sha256: await fetchMsSha256(major, shaTemplate, signal)
+    })
+  }
+  try {
+    const pkg = await fetchRuntimePackage(options.apiBaseUrl ?? ADOPTIUM_ASSETS_URL, major, signal)
+    sources.push({ label: 'Adoptium (Temurin JRE)', url: pkg.link, sha256: pkg.checksum })
+    sources.push({
+      label: '清华 TUNA 镜像',
+      url: `${options.mirrorBaseUrl ?? TUNA_ADOPTIUM_URL}/${major}/jre/x64/windows/${pkg.name}`,
+      sha256: pkg.checksum
+    })
+  } catch {
+    // Adoptium 无 GA：跳过这两源，微软源仍可用
+  }
+  return sources
 }
 
 /** 解析 runtime 目录名 java-<major> → major，不合法返回 undefined。 */
@@ -114,7 +175,7 @@ export async function installRuntime(
   if (!Number.isInteger(major) || major < 8) {
     throw new Error(`invalid java major version: ${major}`)
   }
-  const { apiBaseUrl = ADOPTIUM_ASSETS_URL, mirrorBaseUrl = TUNA_ADOPTIUM_URL, onProgress, signal } = options
+  const { onProgress, signal } = options
   const probe = options.probe ?? probeJava
   const runtimesRoot = join(rootDir, RUNTIMES_DIR)
   const targetDir = join(runtimesRoot, `java-${major}`)
@@ -126,32 +187,36 @@ export async function installRuntime(
   await fs.mkdir(stagingDir, { recursive: true })
 
   try {
-    const pkg = await fetchRuntimePackage(apiBaseUrl, major, signal)
-    const zipPath = join(stagingDir, pkg.name || 'runtime.zip')
-    onProgress?.({ phase: 'download', completed: 0, total: 1, file: pkg.name })
-    try {
-      await downloadFile(pkg.link, zipPath, {
-        checksum: pkg.checksum,
-        algorithm: 'sha256',
-        signal
-      })
-    } catch (err) {
-      if (signal?.aborted) throw err
-      // 官方源（GitHub releases）失败（网络/劫持/404 等）→ 回退清华镜像，校验和仍沿用 API 的 sha256
-      const mirrorUrl = `${mirrorBaseUrl}/${major}/jre/x64/windows/${pkg.name}`
+    const sources = await resolveRuntimeSources(major, options, signal)
+    if (sources.length === 0) {
+      throw new Error(`Java ${major} 没有可用的下载源`)
+    }
+    const zipPath = join(stagingDir, `runtime-${major}.zip`)
+    const failures: string[] = []
+    let downloaded = false
+    for (const source of sources) {
+      onProgress?.({ phase: 'download', completed: 0, total: 1, file: source.label })
       try {
-        await downloadFile(mirrorUrl, zipPath, { checksum: pkg.checksum, algorithm: 'sha256', signal })
-      } catch (mirrorErr) {
-        throw new Error(
-          `下载 Java ${major} 运行时失败 — 官方源: ${describeFetchError(err)}；清华镜像: ${describeFetchError(mirrorErr)}`
-        )
+        await downloadFile(source.url, zipPath, {
+          checksum: source.sha256,
+          algorithm: 'sha256',
+          signal
+        })
+        downloaded = true
+        break
+      } catch (err) {
+        if (signal?.aborted) throw err
+        failures.push(`${source.label}: ${describeFetchError(err)}`)
       }
+    }
+    if (!downloaded) {
+      throw new Error(`下载 Java ${major} 运行时失败，所有源均不可用 — ${failures.join('；')}`)
     }
 
     // 解压到 staging，然后把唯一顶层目录内容提升为 targetDir
     const extractDir = join(stagingDir, 'extract')
     await extractZip(zipPath, extractDir, {
-      onProgress: (done, total) => onProgress?.({ phase: 'extract', completed: done, total, file: pkg.name })
+      onProgress: (done, total) => onProgress?.({ phase: 'extract', completed: done, total, file: `runtime-${major}.zip` })
     })
     const top = await fs.readdir(extractDir, { withFileTypes: true })
     const dirs = top.filter((d) => d.isDirectory)
