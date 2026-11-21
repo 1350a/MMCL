@@ -193,6 +193,8 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 | 2026-11-18 | 迁移后复验：install（168 包，11.5s）/ typecheck / test（5/5）/ build 全部通过；Electron 二进制完好（`node_modules/.pnpm/electron@33.4.11/.../dist/electron.exe`）；新增本交接文档并提交首个 commit `fa77480` |
 | 2026-11-19 | 目录更名为 `MMCL`（用户重命名）；桌面会话复验 test/typecheck/build 全绿，但 GUI 启动崩溃，定位为 Chromium 沙箱初始化失败；新增 `dev:ns` / `smoke:ns` 逃生舱脚本与排障文档 |
 | 2026-11-19 | 事故闭环：根因是 pnpm 首次安装的 Electron `dist` 与官方发布包不一致；用 `etest` 的干净 `dist` 覆盖后恢复，修复后逐文件取证 73/73 与官方 zip 一致。写入 `docs/INCIDENT-2026-11-19-electron-sandbox.md`，并更正 §5.3 旧结论（不再需要 `--no-sandbox`） |
+| 2026-11-21 | M1 桌面端到端验收通过（1.16.5 启动）。崩溃（0x80000003）与 EPERM 真根因实锤为 AI 会话宿主（DSH/ZCode）给项目目录打的 Low 完整性标签——非 dist 内容、非 userData 路径；`icacls` 重标 Medium 修复，AI 会话后会复发需重打。INCIDENT 文档 §11 已补复盘并修正 11-19 定性 |
+| 2026-11-21 | M1 收尾 + M2 代码完成并提交 main（19e98d4 / 206a496 / c30aea7）：半成品版本防护、assets size 快跳、错误聚合；Java 运行时自动管理（Temurin，内置不写环境变量）；`@mcl/agent` 新包 + AI 面板（OpenAI 兼容自实现，工具 list_versions / read_crash_log）。测试 59/59，桌面端到端验收进行中 |
 
 ---
 

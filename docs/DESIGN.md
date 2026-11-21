@@ -15,7 +15,7 @@ MCL 是 **AI 驱动的 Minecraft Java 版第三方启动器**。与现有启动�
 
 ### 2.1 MVP（M1–M3）
 
-1. 版本与 Java 运行时自动管理（Mojang version manifest + Adoptium API）；
+1. 版本与 Java 运行时自动管理（Mojang version manifest + Adoptium API）。**M2 已实现（2026-11-21），落地细节**：内置运行时存 `<userData>/runtimes/java-<major>/`（Temurin JRE，sha256 校验下载 + `java -version` 自检 + `.install-ok` 完成标记），**不写入任何环境变量**；启动时 Java 解析顺序 = 手动配置路径 → 系统检测（JAVA_HOME/PATH）→ 内置 runtime，缺失时 UI 引导一键下载。注意：Adoptium 的 Java 16 无 JRE GA（API 返回空数组），1.17.x 的 16 需求需另议 fallback；
 2. 离线登录 + 外置登录（Authlib-Injector 协议）；
 3. 最小 AI：客户端可配置 API key / base URL / 模型；对话 + 崩溃日志分析 + 版本状态查询。
 
@@ -85,7 +85,7 @@ mcl/
 
 ### 5.1 AI 统一 OpenAI 兼容协议
 
-设置页只暴露三个字段：baseURL + apiKey + model。一次适配同时覆盖 OpenAI / DeepSeek / Kimi / GLM / Ollama（本地）。不内置模型权重 → 无权重许可风险、无体积负担。调用层自实现 HTTP + SSE，不引入 SDK 依赖。
+设置页只暴露三个字段：baseURL + apiKey + model。一次适配同时覆盖 OpenAI / DeepSeek / Kimi / GLM / Ollama（本地）。不内置模型权重 → 无权重许可风险、无体积负担。调用层自实现 HTTP + SSE，不引入 SDK 依赖。**M2 已实现（2026-11-21）**：配置存 settings.json（UI 回显掩码 key）；会话为内存态不落盘（重启即清，MVP 约定）；网络请求只在主进程（renderer 沙箱无 Node），流式增量经白名单 IPC 推送。
 
 ### 5.2 三层愿景 = 工具集演化
 
@@ -151,7 +151,7 @@ electron（MIT）、electron-vite（MIT）、vite（MIT）、react（MIT）、ty
 
 - **ADR-001** Electron 而非 Tauri：新手友好 + AI 驱动生态 + 全栈一种语言；core/agent 解耦保留未来换 Tauri 壳的迁移路径。
 - **ADR-002** AI 层只实现 OpenAI 兼容协议，由用户自配 endpoint。
-- **ADR-003** `@mcl/core` 暂以 CJS 发布（Electron 主进程兼容），后续随 ESM main 迁移。
+- **ADR-003** `@mcl/core` 暂以 CJS 发布（Electron 主进程兼容），后续随 ESM main 迁移。M2 的 `@mcl/agent` 同样以 CJS 发布，与 core 保持一致。
 - **ADR-004** 扩展运行时选 QuickJS（备选 Lua/WASM）。
 
 ## 9. 风险与开放问题
