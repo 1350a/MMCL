@@ -1,10 +1,10 @@
 # 事故复盘：Electron 启动即崩（STATUS_BREAKPOINT，0x80000003）
 
-- 发生日期：2026-11-19
-- 影响范围：M0 脚手架在本机的全部 GUI 运行（`pnpm dev` / `pnpm smoke` / `electron .`）
-- 状态：**已修复**，未进入任何发布产物
-- 一句话结论：`node_modules` 里 Electron 的 `dist` 目录首次安装产物与官方发布包不一致，Chromium 沙箱初始化阶段即 `CHECK` 失败直接 `__debugbreak`；用一份干净的官方 `dist` 覆盖后恢复。
-- 一句话修复：用 `C:\Users\Mac\etest\node_modules\electron\dist` 整目录覆盖项目的同路径目录。
+- 发生日期：2026-11-19（首次），2026-11-21（复发，根因实锤为另一机制，见 §11）
+- 影响范围：M0/M1 在本机的全部 GUI 运行（`pnpm dev` / `pnpm smoke` / `electron .`）
+- 状态：**已修复**（2026-11-21 按 §11 处置，会话内 smoke 恢复），未进入任何发布产物
+- 一句话结论（2026-11-21 修正定性）：**2026-11-21 复发的根因是 DSH/ZCode workspace 的 Low 完整性标签，不是 dist 内容**；2026-11-19 首次事故的"dist 脏产物"结论因旧 dist 已被覆盖而不可复考，存疑保留。
+- 一句话修复（2026-11-21）：`icacls "C:\Users\Mac\Project\MMCL" /setintegritylevel "(OI)(CI)M" /T` 全树重标 Medium。
 
 ---
 
@@ -112,3 +112,41 @@ C:\\Users\\Mac\\Project\\MMCL\\node_modules\\.pnpm\\electron@33.4.11\\node_modul
 - `apps/launcher/package.json`、根 `package.json`（`dev:ns` / `start:ns` / `smoke:ns`）
 - `docs/CONTEXT.md` §5.3（排障入口）、§6（迁移与事故记录表）
 - 排障残留脚本：`C:\Users\Mac\mcl-probe3\t2.ps1`（R0–R4 矩阵）、`C:\Users\Mac\mcl-probe3\zipcheck`（官方 zip 解压件）
+
+## 11. 2026-11-21 复发与新根因（实锤）：DSH workspace Low 完整性标签
+
+### 现象与初判
+
+`pnpm dev` / `pnpm smoke`（正常沙箱）崩（`0x80000003`），`dev:ns` / `smoke:ns` 出窗；切回 main 分支（M0 代码）仍崩 → 与代码无关。按 §7 SOP 处置：官方 zip 与 `.pnpm` 真实 dist **两轮逐文件 sha256 比对全部一致**（73/73），`pnpm rebuild electron` 后仍一致、仍崩 → **内容层排除**，SOP 对本轮复发无效。
+
+### 根因链（2026-11-21 实锤）
+
+DeepSeek Harness（DSH/ZCode，AI 会话宿主）的 Windows ACL 沙箱在 `workspace-write` 模式下，会给工作区根目录**永久**打上三条 ACE（设计如此，README 称 "stand by design / never revoked"）：
+
+```
+C:\Users\Mac\Project\MMCL
+    Everyone:(CI)(DENY)(S,DC)                                   ← 删除拒绝
+    S-1-4-971845238-857831014:(OI)(CI)(W,D,DC)                  ← 确定性 capability SID
+    Mandatory Label\Low Mandatory Level:(OI)(CI)(NW)            ← Low 完整性标签,全树继承
+```
+
+`node_modules\...electron.exe` 继承 `(I)(NW)` Low 标签 → Windows 按**映像文件的 mandatory label** 决定进程 IL → electron 主进程以 **Low IL** 启动 → Chromium 沙箱 broker 要求 Medium+，`CHECK` 失败 → `int3` → `0x80000003`。
+
+同一根因同时解释了 M1 验收时 `pnpm dev:ns` 里的 `EPERM: mkdir 'C:\Users\Mac\AppData\Roaming\@mcl\app\versions'`——**Low IL 进程写 `%APPDATA%`（Medium 区）被 MIC 拒绝**，与 userData 路径名（`@mcl/app`）无关；以及 11-19 复盘的"崩溃早于 userData 写入"旁证。AI 会话内 `pnpm test` 能过是因为 DSH 会把 `TEMP` 重定向到可写的私有目录。
+
+### 佐证
+
+- 官方对照：[deepseek-harness discussion #9314](https://github.com/deepseek-ai/deepseek-harness/discussions/9314)（多个独立复现：.NET/Tauri/Rust/QQ-bot，含硬链接控制实验——同一文件对象，Low 标签路径启动必崩，Medium 副本正常；electron#54614 同签名案例，最终归因 DSH）
+- 本机验证：`icacls` 确认三件套 → 全树重标 Medium（21,757 文件）→ **同一会话同一 dist，`pnpm smoke`（正常沙箱）立即通过**
+
+### 修复与复发须知
+
+```powershell
+icacls "C:\Users\Mac\Project\MMCL" /setintegritylevel "(OI)(CI)M" /T
+```
+
+- 只改 SACL 完整性标签（Low→Medium），不动 DACL（capability ACE 与 deny 保留）；无需管理员；**引号必须**（PowerShell 会把 `(OI)(CI)M` 当子表达式解析）；**不要用 `/reset /T`**（会重写 DACL）。
+- Git Bash 下需 `MSYS_NO_PATHCONV=1` 前缀，否则 `/setintegritylevel` 被路径转换吞掉。
+- **必然复发**：下次 AI 会话（workspace-write）provisioning 的幂等检查发现无 Low 标签后会重新贴上。症状再现时重跑上述命令即可；官方 reclaim 入口（`revokeWrite`）截至 0.2.1-rc.2 未导出（见 discussion #9314 的 asks）。
+- 影响 11-19 定性：当时 Copy-Item 覆盖有效，与"标签继承"矛盾（Copy-Item 新文件仍会继承目标目录标签）——推断 11-19 时标签尚未打上（当时确实是内容脏或别的因素），标签是其后某次 AI 会话 provisioning 打入的。旧 dist 已覆盖，不可复考，存疑保留。
+- SOP §7 仍适用于"dist 内容脏"类复发；本轮证明**校验一致后应立即查完整性标签**（`icacls <root> | Select-String Mandatory`），别再走 rebuild。
