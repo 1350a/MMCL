@@ -120,9 +120,11 @@ interface AiTool {
 
 **沙箱运行时**：QuickJS（ADR-004，MIT；quickjs-emscripten WASM）在主进程内 + CPU 时间片限制；能力面收敛的依据是**沙箱内没有全局 fetch/fs，一切能力由宿主注入**。崩溃隔离的 utility process 留作演进。扩展语言 TS，经 esbuild（MIT）打包为 JS 装载。
 
+**M5-2 实现注记（2026-11-22，包 `@mcl/ext-runtime`）**：quickjs-emscripten 0.32.0 core + `@jitl/quickjs-wasmfile-release-sync`（bellard sync 变体，WASM ~491KB；asyncify 变体留 M5-4 异步宿主调用需要时再切，代价 40% 速度 + 2x 体积）。时间片 = 墙上时钟 deadline + interrupt handler（默认 1000ms/窗口，可配）；内存限制 setMemoryLimit（已知只限单次分配非总量，issue #271）。扩展入口约定 `globalThis.__MCL_ENTRY__ = { activate(ctx) }`。库层实测三坑：①DEBUG 变体 `vm.typeof` 每次调用漏 8 字节（类型检查一律 dump 落宿主侧判断）②TestQuickJSWASMModule 对 `mod.newRuntime()` 的追踪回调不触发（用 `mod.newContext()`，runtime 随 context 释放）③宿主函数返回给 guest 的句柄包装由库在调用后释放（不得进 retained 表）。泄漏断言 QTS_RecoverableLeakCheck 统计整个 FFI 堆存活分配——测试必须 dispose 沙箱否则报错掩盖真实断言。打包（asar）需换 singlefile 变体，归 M4.5。
+
 **AI 生成扩展流水线**：生成（扩展 API 文档进 system prompt）→ **静态一致性检查**（manifest 声明的能力 ≠ 实际请求的能力 → 拒绝装载；能力面是宿主注入的，该检查结构性成立）→ 人工审核 UI（能力清单 + 代码 diff，一次性授权）→ 热装载 → 移除回滚。
 
-**工作拆解**：M5-1 ComponentHost 核心模型 + AI 工具迁内建组件（**已完成 2026-11-22**，新包 `@mcl/host`，内建组件 `builtin.ai-tools`）→ M5-2 QuickJS 沙箱运行时 → M5-3 manifest + 装载器（esbuild 打包、装载/卸载）→ M5-4 能力面实现（ui.panel / game.hooks / fs.instance+net.domains）→ M5-5 AI 生成流水线 → M5-6 管理 UI。验收 = AI 生成扩展 → 审核 → 装载生效 → 卸载零残留。
+**工作拆解**：M5-1 ComponentHost 核心模型 + AI 工具迁内建组件（**已完成 2026-11-22**，新包 `@mcl/host`，内建组件 `builtin.ai-tools`）→ M5-2 QuickJS 沙箱运行时（**已完成 2026-11-22**，新包 `@mcl/ext-runtime`，沙箱扩展 `sandbox.demo` 已接入 AI 工具面）→ M5-3 manifest + 装载器（esbuild 打包、装载/卸载）→ M5-4 能力面实现（ui.panel / game.hooks / fs.instance+net.domains）→ M5-5 AI 生成流水线 → M5-6 管理 UI。验收 = AI 生成扩展 → 审核 → 装载生效 → 卸载零残留。
 
 **边界（M5 明确不做）**：不做外部 MCP server 形态的扩展（全信任 Node 代码，破坏沙箱）——「MCP 桥」列为后置（高权限扩展接入现成 MCP 生态，需单独安全评估）；只做本地生命周期（生成/审核/装载/卸载/目录管理），**分发（zip 导入、registry、信任链）后置**——信任链没想清楚不开分发。
 

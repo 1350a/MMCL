@@ -1,0 +1,33 @@
+{
+  "name": "@mcl/ext-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCL 扩展沙箱运行时：QuickJS（WASM）隔离执行扩展代码，宿主注入能力 API，CPU 时间片 + 内存限制（DESIGN.md §5.3）。纯 TS，不依赖 Electron。",
+  "license": "ISC",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@jitl/quickjs-wasmfile-release-sync": "^0.32.0",
+    "quickjs-emscripten-core": "^0.32.0"
+  },
+  "devDependencies": {
+    "@jitl/quickjs-wasmfile-debug-sync": "^0.32.0",
+    "@mcl/agent": "workspace:*",
+    "@mcl/host": "workspace:*",
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  }
+}

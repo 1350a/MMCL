@@ -53,7 +53,9 @@ import type {
 } from '@mcl/core'
 import { ChatClient, ChatSession } from '@mcl/agent'
 import { ComponentHost } from '@mcl/host'
+import { createSandboxComponent, initExtRuntime } from '@mcl/ext-runtime'
 import { createAiToolsComponent } from './components/aiTools'
+import { DEMO_EXTENSION_CODE } from './extensions/demoExtension'
 import type { AiToolsDeps } from './components/aiTools'
 
 export interface RemoteVersion {
@@ -120,6 +122,14 @@ export class LauncherService {
     this.components.setCoEffect('game.notRunning', true)
     this.components.setCoEffect('ai.configured', this.isAiConfigured())
     this.components.register(createAiToolsComponent(this.aiToolsDeps()))
+    // M5-2：沙箱运行时预热 + 示例沙箱扩展（WASM 加载失败不阻塞启动器，仅少一个组件）
+    void initExtRuntime()
+      .then(() =>
+        this.components.register(
+          createSandboxComponent({ id: 'sandbox.demo', name: '示例沙箱扩展', code: DEMO_EXTENSION_CODE })
+        )
+      )
+      .catch((err) => console.error('[components] 沙箱扩展加载失败：', err))
   }
 
   private readSettings(): SettingsFile {

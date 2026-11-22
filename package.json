@@ -8,12 +8,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/app dev",
-    "dev:ns": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/app dev:ns",
+    "dev": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/ext-runtime build && pnpm --filter @mcl/app dev",
+    "dev:ns": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/ext-runtime build && pnpm --filter @mcl/app dev:ns",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "smoke": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/app smoke",
-    "smoke:ns": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/app smoke:ns"
+    "smoke": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/ext-runtime build && pnpm --filter @mcl/app smoke",
+    "smoke:ns": "pnpm --filter @mcl/core build && pnpm --filter @mcl/host build && pnpm --filter @mcl/ext-runtime build && pnpm --filter @mcl/app smoke:ns"
   }
 }
