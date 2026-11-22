@@ -16,7 +16,7 @@
 | 仓库位置 | `C:\Users\Mac\Project\mcl`（2026-11-18 从 DSH 工作区迁入） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
 | Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
-| 当前阶段 | **M4 桌面验收通过**（2026-11-22：AI 装 Sodium→启动 fabric-loader-0.20.1-1.20.1 全链路对话实锤；Fabric 安装与网络修复桌面端生效）→ 下一步 M5 扩展系统（QuickJS 沙箱） |
+| 当前阶段 | **M5 设计定稿**（2026-11-22：取 Cordis 思想工程化，六决策拍板 + 能力面词汇表 + 工作拆解 M5-1~6，见 DESIGN.md §5.3 + ADR-005）→ 待开工 M5-1（LauncherService 拆 ComponentHost）。备选插队：M4.5 发布准备（打包分发/多实例隔离） |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
 ---
@@ -221,7 +221,8 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 | 2026-11-22 | 三轮反馈修复真 bug：resolveApiRoot 把 15s 超时 signal 混入"外部取消"判定（combined.aborted）→ 超时被误判主动取消，**重试与错误包装全部失效**（日志实锤裸抛 TimeoutError）。修复 = 超时 signal 与外部 signal 分离（tryFetch 只收外部 signal，15s 由每次 fetchWithTimeout 自带）；"没有任何角色"报错加注册引导。真实链路验证：createRequire 脚本对演示站跑 ALI→元数据→authenticate 两遍全通。同日志确认：AI 401 = 用户 apiKey 过期（配置问题）、取消按钮工作正常。四轮：validate 改幂等重试 1 次 + 凭据链对齐规范（validate 未确认有效含网络失败 → 继续 refresh 续期，refresh 失败才要求重登）——此前 validate 超时会直接终止启动。测试 core 93/93 |
 | 2026-11-22 | **M4 代码完成**：core 新增 fabric.ts / installed.ts / modrinth.ts / mods.ts / optionsTxt.ts，launch.ts 加 clientJarPath 覆盖；launcher 加 Fabric/mods/options IPC 六 channel + UI 两卡 + AI 工具扩到 10 个。选型与协议依据见 §4.3 M4 实现记录。测试 130/130（core 121 + agent 9），typecheck/build 全绿，会话内真网冒烟（1.16.5+Fabric+Modrinth 下载）通过。待桌面验收：Fabric 版本启动进主菜单、AI 全流程对话 |
 | 2026-11-22 | **桌面验收首日网络修复**：fabric:install 挂死（UND_ERR_BODY_TIMEOUT）定性——maven.fabricmc.net 直连超时、libraries.minecraft.net 劫持脏内容（两者 sha1 实锤），BMCLAPI maven（302→中科大镜像）秒级可用。修复：下载空闲看门狗（30s 默认，替代 undici 300s 默认）、installVersion 多源回退（BMCLAPI_MAVEN_BASE，fabric 与 launcher 版本安装均挂）、meta/API fetch 超时+重试（fetchJsonWithRetry）、assertSafeRemoteUrl SSRF 校验。测试 139/139（core 130 + agent 9）。冒烟 626s→120s。待桌面复验 |
-| 2026-11-22 | **M4 桌面验收通过**：AI 全流程对话实锤——用户「帮我装 Sodium」→ AI list_versions 发现 1.20.1 已有 fabric-loader → **主动向用户确认目标版本**（system prompt 生效）→ search_mods → install_mod（Sodium 0.5.13+mc1.20.1）→ 提示「原版不加载模组，用 fabric-loader 版本启动」→ 启动成功、mods 落盘确认。Fabric 安装修复与 Java 17 runtime（M2 挂账项）均实际闭环。未覆盖：write_config 桌面对话未走到（不阻塞）。M4 收尾 commit，下一步 M5 扩展系统 |
+| 2026-11-22 | **M4 桌面验收通过**：AI 全流程对话实锤——用户「帮我装 Sodium」→ AI list_versions 发现 1.20.1 已有 fabric-loader → **主动向用户确认目标版本**（system prompt 生效）→ search_mods → install_mod（Sodium 0.5.13+mc1.20.1）→ 提示「原版不加载模组，用 fabric-loader 版本启动」→ 启动成功、mods 落盘确认。Fabric 安装修复与 Java 17 runtime（M2 挂账项）均实际闭环。未覆盖：write_config 桌面对话未走到（不阻塞）。M4 收尾 commit（`9a8a291`，22 文件 +2148），下一步 M5 扩展系统 |
+| 2026-11-22 | **M5 设计定稿（讨论拍板，未动工）**：读透 Cordis 论文（arXiv:2608.25512，DSH「一切皆插件」理论底座）后六决策拍板——①折中 dogfooding（ComponentHost 核心模型 + AI 工具注册/mods 卡片迁内建组件示范）②能力面 4 项（ai.tools / ui.panel / game.hooks / fs.instance+net.domains，注册类真回滚、I/O 类补偿记录）+ 协效应 3 项 ③QuickJS WASM 主进程 + 时间片（utility process 留演进）④AI 生成流水线（静态一致性检查 + 人工审核）⑤MCP 桥后置 ⑥分发后置。工作拆解 M5-1~M5-6，第一步 = LauncherService 拆 ComponentHost。详见 DESIGN.md §5.3 + ADR-005。MVP 盘点：文档定义的 M1-M3 零缺口；真实发布口径缺打包分发/多实例隔离（归入 M4.5 候选） |
 
 ---
 

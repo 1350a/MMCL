@@ -100,9 +100,28 @@ interface AiTool {
 
 工具路线：M2 `{ list_versions, read_crash_log }` → M4 `{ install_mod, set_config, launch_game }` → M5 `{ generate_extension }`。接口格式预留向 MCP 对齐。
 
-### 5.3 扩展系统（M5）
+### 5.3 扩展系统（M5，设计定稿 2026-11-22）
 
-QuickJS（MIT）沙箱；扩展语言 TS/JS（与全栈一致）；AI 生成 → 用户审核 → 热加载；权限白名单（文件系统范围、网络域名）。
+理念来源：Cordis 元框架（arXiv:2608.25512，DSH「一切皆插件」的理论底座）——**取思想、不照搬演算**：组件接入携带逆操作（卸载即回滚）、组件声明依赖（宿主响应式激活/停用）、所有跨组件效应经统一上下文中介。做「理念驱动的工程化」：manifest 即效应声明、**宿主强制而非扩展自觉**、卸载即回滚、依赖声明驱动激活。
+
+**组件模型**：扩展 = manifest（能力/依赖声明）+ 打包后的 JS。内建功能走与扩展完全相同的 API（dogfooding：AI 工具注册、mods 卡片等 2~3 个现有功能迁移为内建组件示范，其余渐进迁移）；扩展与内建组件不存在 API 等级差。
+
+**能力面（效应，M5 首发 4 项）**：
+
+| 能力 | 授予内容 | 卸载回滚 | 性质 |
+|---|---|---|---|
+| `ai.tools` | 注册 AiTool（M2 接口，MCP 形状） | 注销工具 | 可回滚 |
+| `ui.panel` | 挂载声明式面板：扩展产出 JSON schema，宿主 React 渲染；**不向沙箱暴露 React/DOM** | 卸载面板 | 可回滚 |
+| `game.hooks` | 启动前/后钩子（JVM 参数注入、mod 冲突检查等） | 注销钩子 | 可回滚 |
+| `fs.instance` + `net.domains` | 限定 `instances/<id>` 路径与白名单域名的 I/O（宿主代理） | **补偿记录**：卸载时列出该扩展写过的文件 | 不可逆外部效应，诚实边界：只能补偿不能物理逆 |
+
+**协效应（依赖声明，M5 首发 3 项）**：`game.notRunning` / `instance.exists:<id>` / `ai.configured`——宿主在状态变化时重评估，不满足即停用组件并通知。
+
+**沙箱运行时**：QuickJS（ADR-004，MIT；quickjs-emscripten WASM）在主进程内 + CPU 时间片限制；能力面收敛的依据是**沙箱内没有全局 fetch/fs，一切能力由宿主注入**。崩溃隔离的 utility process 留作演进。扩展语言 TS，经 esbuild（MIT）打包为 JS 装载。
+
+**AI 生成扩展流水线**：生成（扩展 API 文档进 system prompt）→ **静态一致性检查**（manifest 声明的能力 ≠ 实际请求的能力 → 拒绝装载；能力面是宿主注入的，该检查结构性成立）→ 人工审核 UI（能力清单 + 代码 diff，一次性授权）→ 热装载 → 移除回滚。
+
+**边界（M5 明确不做）**：不做外部 MCP server 形态的扩展（全信任 Node 代码，破坏沙箱）——「MCP 桥」列为后置（高权限扩展接入现成 MCP 生态，需单独安全评估）；只做本地生命周期（生成/审核/装载/卸载/目录管理），**分发（zip 导入、registry、信任链）后置**——信任链没想清楚不开分发。
 
 ### 5.4 外置登录
 
@@ -153,6 +172,7 @@ electron（MIT）、electron-vite（MIT）、vite（MIT）、react（MIT）、ty
 - **ADR-002** AI 层只实现 OpenAI 兼容协议，由用户自配 endpoint。
 - **ADR-003** `@mcl/core` 暂以 CJS 发布（Electron 主进程兼容），后续随 ESM main 迁移。M2 的 `@mcl/agent` 同样以 CJS 发布，与 core 保持一致。
 - **ADR-004** 扩展运行时选 QuickJS（备选 Lua/WASM）。
+- **ADR-005** M5 扩展系统取 Cordis（arXiv:2608.25512）思想做工程化：组件/效应/协效应模型，manifest 声明 + 宿主强制，卸载回滚（注册类真回滚、I/O 类补偿记录）；不实现论文的形式演算，不做外部 MCP server 形态扩展（MCP 桥后置）。
 
 ## 9. 风险与开放问题
 
