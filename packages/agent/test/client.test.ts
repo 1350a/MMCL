@@ -124,6 +124,51 @@ describe('ChatClient.send', () => {
       expect(client.url()).toBe(expected)
     }
   })
+
+  it('历史截断：发送 system + 最近 N 条，会话本地保留全量', async () => {
+    const { baseUrl, bodies } = await startFixture([sse([deltaContent('ok')])])
+    const client = new ChatClient({ baseUrl, apiKey: 'k', model: 'm', maxHistoryMessages: 2 })
+    const session = new ChatSession('你是启动器助手')
+    for (let i = 0; i < 5; i++) {
+      session.addUser(`问题${i}`)
+      session.addAssistant(`回答${i}`)
+    }
+    await client.send(session.messages())
+
+    const messages = (bodies[0] as { messages: ChatMessage[] }).messages
+    expect(messages).toHaveLength(3) // system + 最近 2 条
+    expect(messages[0]).toEqual({ role: 'system', content: '你是启动器助手' })
+    expect(messages[1]).toEqual({ role: 'user', content: '问题4' })
+    expect(messages[2]).toEqual({ role: 'assistant', content: '回答4' })
+    expect(session.size()).toBe(10) // 本地会话不丢历史
+  })
+
+  it('maxHistoryMessages 为 0 时不截断', async () => {
+    const { baseUrl, bodies } = await startFixture([sse([deltaContent('ok')])])
+    const client = new ChatClient({ baseUrl, apiKey: 'k', model: 'm', maxHistoryMessages: 0 })
+    const session = new ChatSession('s')
+    session.addUser('a')
+    session.addAssistant('b')
+    session.addUser('c')
+    await client.send(session.messages())
+    expect((bodies[0] as { messages: ChatMessage[] }).messages).toHaveLength(4)
+  })
+
+  it('空闲超时：连接后持续无增量，idleTimeoutMs 到点中止并报可读错误', async () => {
+    // 收到请求只回 SSE 响应头，不发送任何数据、不结束 → 流挂起直到空闲超时
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      // 故意不 res.end()，保持挂起
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    servers.push(server)
+    const { port } = server.address() as AddressInfo
+
+    const client = new ChatClient({ baseUrl: `http://127.0.0.1:${port}`, apiKey: 'k', model: 'm', idleTimeoutMs: 150 })
+    const err = await client.send([{ role: 'user', content: 'hi' }]).catch((e) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err.message).toContain('无增量')
+  })
 })
 
 describe('ChatSession', () => {

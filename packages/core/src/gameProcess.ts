@@ -43,7 +43,13 @@ export function launchGame(spec: LaunchSpec, handlers: LaunchHandlers = {}): Lau
   stream.write(`=== MCL launch ${new Date().toISOString()} ===\n`)
 
   const args = [...spec.jvmArgs, spec.mainClass, ...spec.gameArgs]
-  const child = spawn(spec.javaPath, args, { cwd: spec.cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+  // windowsHide：java.exe 是控制台程序，Electron（GUI 进程）spawn 它时 Windows 会另开黑窗；
+  // 输出经 pipe 捕获不受影响，UI 日志区照常显示
+  const child = spawn(spec.javaPath, args, {
+    cwd: spec.cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true
+  })
 
   const emitLog = (source: 'stdout' | 'stderr') =>
     lineSplitter((line) => {

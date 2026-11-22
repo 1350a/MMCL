@@ -3,8 +3,16 @@ import './App.css'
 
 function App() {
   // 账户
-  const [account, setAccount] = useState<string>('')
+  const [account, setAccount] = useState<AccountPayload | null>(null)
   const [nameInput, setNameInput] = useState('')
+  const [authMode, setAuthMode] = useState<'offline' | 'yggdrasil'>('offline')
+  const [serverInput, setServerInput] = useState('')
+  const [authUsername, setAuthUsername] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [profileChoices, setProfileChoices] = useState<ProfileChoice[] | null>(null)
+  const [selectedProfile, setSelectedProfile] = useState('')
+  const [skin, setSkin] = useState<SkinPayload | null>(null)
+  const [loggingIn, setLoggingIn] = useState(false)
   // Java 设置
   const [javaPath, setJavaPath] = useState('')
   const [javaInput, setJavaInput] = useState('')
@@ -39,7 +47,7 @@ function App() {
 
   useEffect(() => {
     // 初始状态
-    window.mcl.getAccount().then((a) => a && setAccount(a.name))
+    window.mcl.getAccount().then((a) => setAccount(a))
     window.mcl.getSettings().then((s) => {
       setJavaPath(s.javaPath)
       setJavaInput(s.javaPath)
@@ -58,6 +66,12 @@ function App() {
     const unsubs = [
       window.mcl.onInstallProgress((p) => setProgress(p)),
       window.mcl.onJavaInstallProgress((p) => setJavaDl(p)),
+      window.mcl.onAccountChanged((a) => {
+        setAccount(a)
+        setProfileChoices(null)
+        setAuthPassword('')
+        setSelectedProfile('')
+      }),
       window.mcl.onInstallDone((p) => {
         setInstalling(false)
         setProgress(null)
@@ -99,6 +113,15 @@ function App() {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [gameLines])
 
+  // 外置账户变化时刷新皮肤头像
+  useEffect(() => {
+    if (account?.kind !== 'yggdrasil') {
+      setSkin(null)
+      return
+    }
+    window.mcl.fetchSkin().then((s) => setSkin(s))
+  }, [account])
+
   useEffect(() => {
     aiChatRef.current?.scrollTo({ top: aiChatRef.current.scrollHeight })
   }, [aiMessages, aiStreaming])
@@ -116,8 +139,42 @@ function App() {
 
   const onSaveAccount = () =>
     run(async () => {
-      const saved = await window.mcl.saveAccount(nameInput.trim())
-      setAccount(saved.name)
+      await window.mcl.saveAccount(nameInput.trim())
+      setAccount(await window.mcl.getAccount())
+      setMessage('')
+    })
+
+  const onYggdrasilLogin = () =>
+    run(async () => {
+      setLoggingIn(true)
+      try {
+        const result = await window.mcl.yggdrasilLogin(serverInput.trim(), authUsername.trim(), authPassword)
+        if (result.status === 'select-profile') {
+          setProfileChoices(result.profiles)
+          setSelectedProfile(result.profiles[0]?.id ?? '')
+          setMessage('')
+        }
+        // status ok 时账户经 event:account-changed 事件回填
+      } finally {
+        setLoggingIn(false)
+      }
+    })
+
+  const onSelectProfile = () =>
+    run(async () => {
+      setLoggingIn(true)
+      try {
+        await window.mcl.selectProfile(selectedProfile)
+        setProfileChoices(null)
+        setMessage('')
+      } finally {
+        setLoggingIn(false)
+      }
+    })
+
+  const onLogout = () =>
+    run(async () => {
+      await window.mcl.logoutAccount()
       setMessage('')
     })
 
@@ -137,6 +194,19 @@ function App() {
       await window.mcl.installVersion(selectedRemote)
       setInstalling(false)
       setProgress(null)
+    })
+
+  const onCancelInstall = () =>
+    run(async () => {
+      await window.mcl.cancelInstall()
+      setMessage('安装取消中…')
+    })
+
+  const onCancelRuntime = () =>
+    run(async () => {
+      await window.mcl.cancelRuntimeInstall()
+      setJavaDl(null) // 取消后不再有进度事件，本地恢复下载按钮
+      setMessage('运行时下载已取消（.part 已下部分保留，重下时续传）')
     })
 
   const onSaveAiConfig = () =>
@@ -200,21 +270,102 @@ function App() {
     <div className="app">
       <span className="badge">M1 · 能玩原版</span>
       <h1>MCL</h1>
-      <p className="subtitle">AI 驱动的 Minecraft 启动器 · 离线账户 + 版本安装 + 原版启动</p>
+      <p className="subtitle">AI 驱动的 Minecraft 启动器 · 离线/外置账户 + 版本安装 + 原版启动</p>
 
       <section className="card">
-        <h2>离线账户</h2>
-        <div className="row">
-          <input
-            value={nameInput}
-            onChange={(e) => setNameInput(e.target.value)}
-            placeholder="玩家名（3-16 位字母/数字/下划线）"
-          />
-          <button onClick={onSaveAccount} disabled={!nameInput.trim()}>
-            保存
-          </button>
-        </div>
-        <div className="result">当前账户：{account || '未创建'}</div>
+        <h2>账户</h2>
+        {!account && (
+          <div className="row">
+            <select value={authMode} onChange={(e) => setAuthMode(e.target.value as 'offline' | 'yggdrasil')}>
+              <option value="offline">离线登录</option>
+              <option value="yggdrasil">外置登录（authlib-injector）</option>
+            </select>
+          </div>
+        )}
+        {!account && authMode === 'offline' && (
+          <div className="row">
+            <input
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+              placeholder="玩家名（3-16 位字母/数字/下划线）"
+            />
+            <button onClick={onSaveAccount} disabled={!nameInput.trim()}>
+              保存
+            </button>
+          </div>
+        )}
+        {!account && authMode === 'yggdrasil' && (
+          <>
+            <div className="row">
+              <input
+                value={serverInput}
+                onChange={(e) => setServerInput(e.target.value)}
+                placeholder="认证服务器地址（API 根或首页，如 skin.example.com）"
+              />
+            </div>
+            {serverInput.trim().startsWith('http://') && (
+              <div className="error">警告：该服务器使用明文 HTTP，密码将不加密传输，存在安全风险</div>
+            )}
+            <div className="row">
+              <input
+                value={authUsername}
+                onChange={(e) => setAuthUsername(e.target.value)}
+                placeholder="账号（邮箱或用户名，以服务器要求为准）"
+              />
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && onYggdrasilLogin()}
+                placeholder="密码"
+              />
+              <button
+                onClick={onYggdrasilLogin}
+                disabled={!serverInput.trim() || !authUsername.trim() || !authPassword || loggingIn}
+              >
+                {loggingIn ? '登录中…' : '登录'}
+              </button>
+            </div>
+            {profileChoices && (
+              <div className="row">
+                <select value={selectedProfile} onChange={(e) => setSelectedProfile(e.target.value)}>
+                  {profileChoices.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={onSelectProfile} disabled={!selectedProfile || loggingIn}>
+                  确认角色
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {account && (
+          <div className="row">
+            {skin && (
+              <img
+                src={skin.url}
+                alt="皮肤"
+                style={{ height: 64, imageRendering: 'pixelated' }}
+              />
+            )}
+            <div className="result" style={{ flex: 1 }}>
+              当前账户：
+              {account.kind === 'yggdrasil' ? (
+                <>
+                  {account.name}（外置 ·{' '}
+                  <span title={account.apiRoot}>{account.serverName ?? account.apiRoot}</span>）
+                </>
+              ) : (
+                `${account.name}（离线）`
+              )}
+            </div>
+            <button onClick={onLogout}>登出</button>
+          </div>
+        )}
+        {!account && <div className="result">当前账户：未创建</div>}
       </section>
 
       <section className="card">
@@ -251,6 +402,9 @@ function App() {
           <button onClick={onInstall} disabled={!selectedRemote || installing}>
             安装
           </button>
+          {installing && (
+            <button onClick={onCancelInstall}>取消</button>
+          )}
         </div>
         {progress && (
           <div className="progress">
@@ -293,6 +447,7 @@ function App() {
                 ? `${javaDl.phase === 'download' ? '下载' : '解压'} ${javaDl.completed}/${javaDl.total}`
                 : `下载 Java ${needJavaMajor}`}
             </button>
+            {javaDl && <button onClick={onCancelRuntime}>取消</button>}
           </div>
         )}
       </section>

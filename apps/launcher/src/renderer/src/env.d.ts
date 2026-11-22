@@ -12,9 +12,33 @@ interface SettingsPayload {
   javaRaw?: string
 }
 
-interface AccountPayload {
+interface OfflineAccountPayload {
+  kind: 'offline'
   name: string
   uuid: string
+}
+
+/** 渲染进程可见的 Yggdrasil 账户（不含 accessToken/clientToken）。 */
+interface YggdrasilAccountPayload {
+  kind: 'yggdrasil'
+  name: string
+  uuid: string
+  apiRoot: string
+  serverName?: string
+}
+
+type AccountPayload = OfflineAccountPayload | YggdrasilAccountPayload
+
+interface ProfileChoice {
+  id: string
+  name: string
+}
+
+type YggdrasilLoginResult = { status: 'ok' } | { status: 'select-profile'; profiles: ProfileChoice[] }
+
+interface SkinPayload {
+  url: string
+  model?: 'default' | 'slim'
 }
 
 interface InstallProgressPayload {
@@ -78,14 +102,21 @@ interface MclApi {
   getSettings: () => Promise<SettingsPayload>
   setJavaPath: (javaPath: string) => Promise<SettingsPayload>
   getAccount: () => Promise<AccountPayload | null>
-  saveAccount: (name: string) => Promise<AccountPayload>
+  saveAccount: (name: string) => Promise<OfflineAccountPayload>
+
+  yggdrasilLogin: (server: string, username: string, password: string) => Promise<YggdrasilLoginResult>
+  selectProfile: (profileId: string) => Promise<void>
+  logoutAccount: () => Promise<void>
+  fetchSkin: () => Promise<SkinPayload | null>
 
   listRemoteVersions: () => Promise<RemoteVersion[]>
   listInstalledVersions: () => Promise<string[]>
   installVersion: (id: string) => Promise<void>
+  cancelInstall: () => Promise<void>
 
   listRuntimes: () => Promise<RuntimeInfoPayload[]>
   installRuntime: (major: number) => Promise<RuntimeInfoPayload>
+  cancelRuntimeInstall: () => Promise<void>
 
   launchGame: (id: string) => Promise<{ logFile: string }>
   stopGame: () => Promise<void>
@@ -100,6 +131,7 @@ interface MclApi {
   onInstallProgress: (callback: (payload: InstallProgressPayload) => void) => Unsubscribe
   onInstallDone: (callback: (payload: InstallDonePayload) => void) => Unsubscribe
   onJavaInstallProgress: (callback: (payload: JavaInstallProgressPayload) => void) => Unsubscribe
+  onAccountChanged: (callback: (payload: AccountPayload | null) => void) => Unsubscribe
   onGameLog: (callback: (payload: GameLogPayload) => void) => Unsubscribe
   onGameExit: (callback: (payload: GameExitPayload) => void) => Unsubscribe
   onAiDelta: (callback: (payload: AiDeltaPayload) => void) => Unsubscribe

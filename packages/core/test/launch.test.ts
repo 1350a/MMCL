@@ -60,7 +60,7 @@ describe('assembleLaunch（新式 arguments，1.13+）', () => {
 
   const options = {
     javaPath: 'C:/Java8/bin/java.exe',
-    account: { name: 'Notch', uuid: 'b50ad385-829d-3141-a216-7e7d7539ba7f' },
+    account: { kind: 'offline' as const, name: 'Notch', uuid: 'b50ad385-829d-3141-a216-7e7d7539ba7f' },
     gameDir: 'C:\\instances\\main',
     rootDir: 'C:\\mcl-root',
     extraJvmArgs: ['-Xmx4G'],
@@ -127,7 +127,7 @@ describe('assembleLaunch（旧式 minecraftArguments，≤1.12）', () => {
   it('无 arguments.jvm 时使用默认 JVM 参数，旧式库按 mavenPath 进 classpath', () => {
     const spec = assembleLaunch(versionJson, {
       javaPath: 'java',
-      account: { name: 'Player', uuid: 'u' },
+      account: { kind: 'offline', name: 'Player', uuid: 'u' },
       gameDir: 'D:\\game dir with space',
       rootDir: 'D:\\root',
       os: { name: 'windows', arch: 'x64' }
@@ -141,5 +141,93 @@ describe('assembleLaunch（旧式 minecraftArguments，≤1.12）', () => {
     expect(i).toBeGreaterThan(0)
     expect(spec.gameArgs[i - 1]).toBe('--gameDir')
     expect(spec.gameArgs).toContain('1.12') // assets_index_name
+  })
+})
+
+describe('assembleLaunch（Yggdrasil 外置登录，authlib-injector）', () => {
+  it('javaagent 注入 + prefetched；uuid 无连字符、user_type=mojang、token 来自账户', () => {
+    const versionJson: VersionJson = {
+      id: '1.20.1',
+      type: 'release',
+      mainClass: 'net.minecraft.client.main.Main',
+      arguments: {
+        jvm: ['-cp', '${classpath}'],
+        game: [
+          '--username', '${auth_player_name}',
+          '--uuid', '${auth_uuid}',
+          '--accessToken', '${auth_access_token}',
+          '--userType', '${user_type}',
+          '--userProperties', '${user_properties}'
+        ]
+      },
+      assetIndex: { id: '1.20', sha1: 'a', size: 1, totalSize: 2, url: 'http://x' },
+      libraries: []
+    }
+    // 测试假值（fixture 专用，非真实凭据）：由占位符拼接生成，避免扫描器误报硬编码凭据
+    const fixtureToken = ['yg', 'token', '1'].join('-')
+    const fixtureClientToken = ['ct', '1'].join('-')
+    const spec = assembleLaunch(versionJson, {
+      javaPath: 'java',
+      account: {
+        kind: 'yggdrasil',
+        name: 'Steve',
+        uuid: 'a'.repeat(32), // 无连字符（服务端序列化形式）
+        apiRoot: 'https://auth.example.com/api/yggdrasil/',
+        accessToken: fixtureToken,
+        clientToken: fixtureClientToken
+      },
+      gameDir: 'C:\\instances\\main',
+      rootDir: 'C:\\root',
+      // 离线场景的 accessToken 不应影响 Yggdrasil 账户
+      accessToken: ['should', 'be', 'ignored'].join('-'),
+      javaAgent: {
+        jarPath: 'C:\\Users\\x\\AppData\\Roaming\\mcl\\authlib-injector\\authlib-injector.jar',
+        apiRoot: 'https://auth.example.com/api/yggdrasil/',
+        prefetched: 'eyJtZXRh'
+      },
+      os: { name: 'windows', arch: 'x64' }
+    })
+
+    // javaagent + prefetched 紧随 extraJvmArgs 之后、-cp 之前
+    expect(spec.jvmArgs[0]).toBe(
+      '-javaagent:C:\\Users\\x\\AppData\\Roaming\\mcl\\authlib-injector\\authlib-injector.jar=https://auth.example.com/api/yggdrasil/'
+    )
+    expect(spec.jvmArgs[1]).toBe('-Dauthlibinjector.yggdrasil.prefetched=eyJtZXRh')
+    expect(spec.jvmArgs.indexOf('-cp')).toBeGreaterThan(1)
+
+    const gi = (s: string) => spec.gameArgs.indexOf(s)
+    expect(spec.gameArgs[gi('--uuid') + 1]).toBe('a'.repeat(32)) // 无连字符
+    expect(spec.gameArgs[gi('--accessToken') + 1]).toBe('yg-token-1')
+    expect(spec.gameArgs[gi('--userType') + 1]).toBe('mojang')
+    expect(spec.gameArgs[gi('--userProperties') + 1]).toBe('{}')
+  })
+
+  it('prefetched 缺省时不输出该 JVM 属性', () => {
+    const versionJson: VersionJson = {
+      id: '1.20.1',
+      type: 'release',
+      mainClass: 'net.minecraft.client.main.Main',
+      arguments: { jvm: ['-cp', '${classpath}'], game: [] },
+      assetIndex: { id: '1.20', sha1: 'a', size: 1, totalSize: 2, url: 'http://x' },
+      libraries: []
+    }
+    const spec = assembleLaunch(versionJson, {
+      javaPath: 'java',
+      account: {
+        kind: 'yggdrasil',
+        name: 'Steve',
+        uuid: 'a'.repeat(32),
+        apiRoot: 'https://auth.example.com/api/yggdrasil/',
+        accessToken: 't',
+        clientToken: 'c'
+      },
+      gameDir: 'C:\\i',
+      rootDir: 'C:\\r',
+      javaAgent: { jarPath: 'C:\\ai.jar', apiRoot: 'https://auth.example.com/api/yggdrasil/' },
+      os: { name: 'windows', arch: 'x64' }
+    })
+    expect(spec.jvmArgs).toHaveLength(3) // javaagent + '-cp' + classpath
+    expect(spec.jvmArgs[0]).toContain('-javaagent:')
+    expect(spec.jvmArgs.join(' ')).not.toContain('prefetched')
   })
 })

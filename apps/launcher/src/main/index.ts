@@ -74,13 +74,22 @@ function registerIpc(): void {
 
   ipcMain.handle('settings:get', () => service.getSettings())
   ipcMain.handle('settings:setJavaPath', (_e, javaPath: string) => service.setJavaPath(javaPath))
-  ipcMain.handle('account:get', () => service.getAccount())
+  ipcMain.handle('account:get', () => service.getAccountPayload())
   ipcMain.handle('account:save', (_e, name: string) => service.saveAccount(name))
+  // M3 外置登录（authlib-injector / Yggdrasil）
+  ipcMain.handle('auth:yggdrasil-login', (_e, server: string, username: string, password: string) =>
+    service.yggdrasilLogin(server, username, password)
+  )
+  ipcMain.handle('auth:select-profile', (_e, profileId: string) => service.selectYggdrasilProfile(profileId))
+  ipcMain.handle('auth:logout', () => service.logoutAccount())
+  ipcMain.handle('auth:skin', () => service.fetchCurrentSkin())
   ipcMain.handle('version:listRemote', () => service.listRemoteVersions())
   ipcMain.handle('version:listInstalled', () => service.listInstalledVersions())
   ipcMain.handle('version:install', (_e, id: string) => service.installVersion(id))
+  ipcMain.handle('version:cancelInstall', () => service.cancelInstallVersion())
   ipcMain.handle('java:listRuntimes', () => service.listRuntimes())
   ipcMain.handle('java:installRuntime', (_e, major: number) => service.installRuntimeFor(major))
+  ipcMain.handle('java:cancelRuntimeInstall', () => service.cancelRuntimeInstall())
   ipcMain.handle('game:launch', (_e, id: string) => service.launchVersion(id))
   ipcMain.handle('ai:getConfig', () => service.getAiConfig())
   ipcMain.handle('ai:setConfig', (_e, ai) => service.setAiConfig(ai))

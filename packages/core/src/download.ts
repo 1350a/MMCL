@@ -28,6 +28,23 @@ function isNetworkError(err: unknown): boolean {
   return /terminated|fetch failed|ECONNRESET|ECONNREFUSED|EPIPE|socket hang up|ETIMEDOUT|network/i.test(message)
 }
 
+/** Windows 瞬态文件锁（杀软实时扫描刚写完的文件时 rename 会 EPERM/EBUSY）。 */
+const RENAME_LOCK_CODES = new Set(['EPERM', 'EBUSY', 'EACCES'])
+
+/** rename 遇瞬态文件锁自动重试（扫描通常几百毫秒内结束）。 */
+async function renameWithRetry(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(from, to)
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? ''
+      if (attempt >= 4 || !RENAME_LOCK_CODES.has(code)) throw err
+      await new Promise((r) => setTimeout(r, 200 * (attempt + 1)))
+    }
+  }
+}
+
 /** 把底层 fetch 错误翻译成用户能看懂的一句话（含证书劫持识别）。 */
 export function describeFetchError(err: unknown): string {
   const code = (err as { cause?: { code?: string } })?.cause?.code ?? ''
@@ -128,5 +145,5 @@ async function attemptDownload(
     }
   }
 
-  await fs.rename(part, dest)
+  await renameWithRetry(part, dest)
 }

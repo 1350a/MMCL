@@ -17,12 +17,20 @@ const api = {
   getAccount: () => ipcRenderer.invoke('account:get'),
   saveAccount: (name: string) => ipcRenderer.invoke('account:save', name),
 
+  yggdrasilLogin: (server: string, username: string, password: string) =>
+    ipcRenderer.invoke('auth:yggdrasil-login', server, username, password),
+  selectProfile: (profileId: string) => ipcRenderer.invoke('auth:select-profile', profileId),
+  logoutAccount: () => ipcRenderer.invoke('auth:logout'),
+  fetchSkin: () => ipcRenderer.invoke('auth:skin'),
+
   listRemoteVersions: () => ipcRenderer.invoke('version:listRemote'),
   listInstalledVersions: () => ipcRenderer.invoke('version:listInstalled'),
   installVersion: (id: string) => ipcRenderer.invoke('version:install', id),
+  cancelInstall: () => ipcRenderer.invoke('version:cancelInstall'),
 
   listRuntimes: () => ipcRenderer.invoke('java:listRuntimes'),
   installRuntime: (major: number) => ipcRenderer.invoke('java:installRuntime', major),
+  cancelRuntimeInstall: () => ipcRenderer.invoke('java:cancelRuntimeInstall'),
 
   launchGame: (id: string) => ipcRenderer.invoke('game:launch', id),
   stopGame: () => ipcRenderer.invoke('game:stop'),
@@ -37,6 +45,7 @@ const api = {
   onInstallProgress: on('event:install-progress'),
   onInstallDone: on('event:install-done'),
   onJavaInstallProgress: on('event:java-install-progress'),
+  onAccountChanged: on('event:account-changed'),
   onGameLog: on('event:game-log'),
   onGameExit: on('event:game-exit'),
   onAiDelta: on('event:ai-delta'),

@@ -3,7 +3,7 @@
 > 这份文件是项目的"可迁移记忆"：技术栈、关键决策、任务清单、运行方式、迁移记录。
 > 新会话、新协作者、未来的我：**先读这份，再读 [DESIGN.md](./DESIGN.md) 的 3/7/8 节**，然后跑 `pnpm test` 确认基线。
 
-最后更新：2026-11-18（迁移至 `C:\Users\Mac\Project\mcl` 当天）
+最后更新：2026-11-21（M3 外置登录代码完成）
 
 ---
 
@@ -16,7 +16,7 @@
 | 仓库位置 | `C:\Users\Mac\Project\mcl`（2026-11-18 从 DSH 工作区迁入） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
 | Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
-| 当前阶段 | **M2 代码完成**（Java 运行时自动管理 + AI 面板；桌面端到端验收进行中） |
+| 当前阶段 | **M3 桌面验收通过**（2026-11-22：外置登录全链路 + AI 对话实测可用；游戏控制台黑窗已修 windowsHide）→ 下一步 M4 智能体操作 + mod 加载器 |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
 ---
@@ -116,6 +116,12 @@
 > - **Java 运行时**：`packages/core/src/runtime.ts` —— Adoptium API（Temurin JRE，sha256 校验复用 `downloadFile` 自愈）→ `extractZip`（自 extractNatives 抽出，带 zip-slip 防护）→ 顶层目录提升到 `runtimes/java-<major>/` → `java -version` 自检 → `.install-ok` 标记。**内置运行时不写任何环境变量**（用户决策）；启动 Java 解析顺序 = 手动路径 → 系统检测 → 内置 runtime，缺失时 UI 引导一键下载。Adoptium Java 16 无 JRE GA（实测空数组），验收版本用 1.20.1（Java 17）。
 > - **AI 面板**：新包 `packages/agent`（CJS 对齐 core，禁 electron/react）—— OpenAI 兼容 chat completions 自实现 fetch + SSE + function calling 循环（`client.ts`）、内存会话（`session.ts`，MVP 不落盘）、`AiTool` 形态预留 MCP 对齐。launcher 注入两个工具：`list_versions`（已装版本/内置 runtime/运行状态）、`read_crash_log`（latest.log 尾部 200 行 + crash-reports 最新一份）。设置三字段 baseURL/apiKey/model 存 settings.json（UI 回显掩码）。
 > - 测试 59/59（core 53 + agent 6）。
+> **M3 实现记录（2026-11-21，代码完成待桌面验收）**：
+> - **许可结论**：authlib-injector = AGPL-3.0+ 带**官方 AUTHLIB-INJECTOR 例外条款**（COPYING.md 原文核实）：分发未修改二进制 / HTTP API 交互 / **Java Agent 加载**三种方式均不触发 AGPL 传染，用户确认接受；MMCL 保持 ISC。wiki 文档 CC BY-SA 4.0，只读参考。
+> - **协议依据**（官方 wiki en 版逐字核实，非猜测）：`-javaagent:{jar}={API根}` + `-Dauthlibinjector.yggdrasil.prefetched={base64(元数据响应)}`；`${auth_uuid}` 无连字符、`${user_type}`=mojang；authserver 四端点（authenticate/refresh/validate 204|403/invalidate 恒 204）+ ALI 头解析 + 禁止降级 HTTP；jar 分发 API `authlib-injector.yushi.moe/artifact/latest.json`（sha256），BMCLAPI 镜像兜底。
+> - **core 新模块**：`yggdrasil.ts`（ALI 解析、四端点、元数据+prefetched、profile/皮肤 textures 解码、15s 超时）；`authlibInjector.ts`（官方→BMCLAPI 逐源回退、sha256 校验、`.install-ok` 版本标记，已装不联网）；`account.ts` 改判别联合（offline/yggdrasil，旧格式自动迁移，yggdrasil uuid 不被离线覆盖）；`launch.ts` 新增 `javaAgent` 注入点 + 认证变量按账户类型分支（离线路径零改动）。
+> - **launcher 编排**：外置登录（ALI→元数据→authenticate，多 profile 挂起选择→refresh 绑定）、clientToken 存 settings 长期复用、启动前凭据链 validate→refresh→要求重登、并行备齐 jar+元数据、皮肤头像（textures base64→URL）。IPC 新增 `auth:*` 四 channel + `event:account-changed`，账户 payload 不含 token。
+> - 测试 93/93（core 87 + agent 6）。**待验收**：离线回归（1.16.5）、外置登录全流程（服务器可用 yggdrasil-mock 本地起，GPL 仅作测试工具不进代码库）、游戏主界面显示服务器名（注入成功标志）。
 | M3 | 外置登录（authlib-injector 协议） | 登录/刷新/拉皮肤 |
 | M4 | 智能体操作（工具调用）+ mod 加载器 | AI 装 mod / 改配置 / 启动游戏 |
 | M5 | 扩展系统（QuickJS 沙箱） | AI 生成扩展并热加载 |
@@ -195,6 +201,12 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 | 2026-11-19 | 事故闭环：根因是 pnpm 首次安装的 Electron `dist` 与官方发布包不一致；用 `etest` 的干净 `dist` 覆盖后恢复，修复后逐文件取证 73/73 与官方 zip 一致。写入 `docs/INCIDENT-2026-11-19-electron-sandbox.md`，并更正 §5.3 旧结论（不再需要 `--no-sandbox`） |
 | 2026-11-21 | M1 桌面端到端验收通过（1.16.5 启动）。崩溃（0x80000003）与 EPERM 真根因实锤为 AI 会话宿主（DSH/ZCode）给项目目录打的 Low 完整性标签——非 dist 内容、非 userData 路径；`icacls` 重标 Medium 修复，AI 会话后会复发需重打。INCIDENT 文档 §11 已补复盘并修正 11-19 定性 |
 | 2026-11-21 | M1 收尾 + M2 代码完成并提交 main（19e98d4 / 206a496 / c30aea7）：半成品版本防护、assets size 快跳、错误聚合；Java 运行时自动管理（Temurin，内置不写环境变量）；`@mcl/agent` 新包 + AI 面板（OpenAI 兼容自实现，工具 list_versions / read_crash_log）。测试 59/59，桌面端到端验收进行中 |
+| 2026-11-21 | M2 两轮验收修复入 main（2a41944 / 4b43074）：AI baseURL 原样前缀、下载重试、Adoptium→TUNA 回退；Java 源改微软 JDK 优先（MIT、aka.ms 短链 + sha256sum.txt）；AI 卡死修复（aiBusy finally 释放、aiSend 失败回滚）。测试 62/62。M2 桌面验收仍待用户（1.20.1 Java 下载上次未闭环） |
+| 2026-11-21 | **M3 外置登录代码完成**：core 新增 yggdrasil.ts / authlibInjector.ts，account 判别联合 + launch javaAgent 注入；launcher 外置登录编排 + IPC auth:* + UI 双模式账户卡片。许可结论：AGPL+官方例外条款覆盖（用户确认）。协议依据全部官方 wiki 逐字核实。测试 93/93，typecheck/build 全绿，待桌面验收 |
+| 2026-11-21 | 桌面首轮验收反馈修复：`downloadFile` rename 遇 Windows 瞬态文件锁（杀软扫描 `.part` 报 EPERM）自动重试（`renameWithRetry`，EPERM/EBUSY/EACCES ×4 递增延迟）——此锁曾致 authlib-injector 两源下载全失败。外置登录链路实测通（内网 http 服务器 ALI 解析/403 错误解析/凭据链正常）。Java 下载慢（微软 JDK 187MB）用户拍板暂不调整源策略，挂账 M2 收尾。测试 89/89 |
+| 2026-11-22 | **M2 收尾四项完成**（用户边验收边清账决策）：① AI 空闲超时（agent 包 `idleTimeoutMs` 默认 60s，无 SSE 增量喂狗即中止，报可读错误）② 会话历史截断（`maxHistoryMessages` 默认 20，发送视图 system+最近 N 条，本地会话保留全量）③ 下载取消（core signal 早已全链路透传，补 launcher 层 AbortController + `version:cancelInstall`/`java:cancelRuntimeInstall` IPC + UI 取消按钮，取消后 `.part` 保留续传）④ 主进程 aiSend 并发锁（多窗口/竞态防交叠）。测试 98/98（core 89 + agent 9），typecheck/build 全绿 |
+| 2026-11-22 | 二轮验收反馈修复：yggdrasil TimeoutError 定性——curl 实测演示站 auth-demo.yushi.moe 6 请求挂 3（校园网→Cloudflare 间歇丢包），服务端与协议层无错、程序问题是超时裸抛。修复：yggdrasil.ts 幂等 GET 自动重试 1 次（登录类 POST 不重试防副作用）+ describeNetworkFailure 中文可读错误（超时/连接拒绝/DNS/证书劫持）+ https 失败引导显式 http://（规范禁自动降级）。Java 187MB 下载慢与此同源。测试 core 92/92 |
+| 2026-11-22 | 三轮反馈修复真 bug：resolveApiRoot 把 15s 超时 signal 混入"外部取消"判定（combined.aborted）→ 超时被误判主动取消，**重试与错误包装全部失效**（日志实锤裸抛 TimeoutError）。修复 = 超时 signal 与外部 signal 分离（tryFetch 只收外部 signal，15s 由每次 fetchWithTimeout 自带）；"没有任何角色"报错加注册引导。真实链路验证：createRequire 脚本对演示站跑 ALI→元数据→authenticate 两遍全通。同日志确认：AI 401 = 用户 apiKey 过期（配置问题）、取消按钮工作正常。四轮：validate 改幂等重试 1 次 + 凭据链对齐规范（validate 未确认有效含网络失败 → 继续 refresh 续期，refresh 失败才要求重登）——此前 validate 超时会直接终止启动。测试 core 93/93 |
 
 ---
 

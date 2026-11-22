@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
@@ -163,5 +163,57 @@ describe('downloadFile', () => {
     await expect(
       downloadFile(`${fixture.baseUrl}/missing`, join(dir, 'x.bin'))
     ).rejects.toBeInstanceOf(HttpError)
+  })
+
+  it('rename 被瞬态锁（EPERM）挡住时自动重试后成功（杀软扫描场景）', async () => {
+    const fixture = await startFixture(256)
+    servers.push(fixture.server)
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    const dest = join(dir, 'locked.bin')
+
+    const real = fs.rename.bind(fs)
+    let renameCalls = 0
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      renameCalls++
+      if (renameCalls <= 2) {
+        const err = new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`) as NodeJS.ErrnoException
+        err.code = 'EPERM'
+        throw err
+      }
+      return real(from, to)
+    })
+    try {
+      await downloadFile(`${fixture.baseUrl}/file.bin`, dest, { checksum: sha1(fixture.payload) })
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(renameCalls).toBe(3)
+    expect(await fs.readFile(dest)).toEqual(fixture.payload)
+    expect(await exists(`${dest}.part`)).toBe(false)
+  })
+
+  it('rename 非瞬态错误（如 ENOENT）不重试直接抛出', async () => {
+    const fixture = await startFixture(64)
+    servers.push(fixture.server)
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+
+    const real = fs.rename.bind(fs)
+    let renameCalls = 0
+    const spy = vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      renameCalls++
+      const err = new Error(`ENOENT: no such file or directory, rename '${from}' -> '${to}'`) as NodeJS.ErrnoException
+      err.code = 'ENOENT'
+      throw err
+    })
+    try {
+      await expect(
+        downloadFile(`${fixture.baseUrl}/file.bin`, join(dir, 'gone.bin'))
+      ).rejects.toThrow(/ENOENT/)
+    } finally {
+      spy.mockRestore()
+    }
+    expect(renameCalls).toBe(1)
+    void real
   })
 })

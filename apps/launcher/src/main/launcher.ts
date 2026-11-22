@@ -4,24 +4,45 @@ import type { ChildProcess } from 'node:child_process'
 import {
   assembleLaunch,
   assertJavaCompatible,
+  authenticate,
   detectJava,
+  ensureAuthlibInjector,
+  fetchProfileWithSkin,
+  fetchServerMeta,
   fetchVersionJson,
   fetchVersionManifest,
   findVersionEntry,
+  generateClientToken,
   installRuntime,
   installVersion,
+  invalidate,
   JavaVersionMismatchError,
   launchGame,
   listInstalledRuntimes,
   loadAccounts,
   mergeVersionJson,
   pickRuntime,
+  refresh,
+  resolveApiRoot,
   saveAccounts,
+  validate,
   validatePlayerName
+} from '@mcl/core'
+import type {
+  Account,
+  AuthenticateResponse,
+  JavaAgentOptions,
+  OfflineAccount,
+  ProfileWithSkin,
+  RuntimeInfo,
+  JavaInfo,
+  VersionJson,
+  VersionManifest,
+  YggdrasilAccount,
+  YgProfile
 } from '@mcl/core'
 import { ChatClient, ChatSession } from '@mcl/agent'
 import type { AiTool } from '@mcl/agent'
-import type { Account, RuntimeInfo, JavaInfo, VersionJson, VersionManifest } from '@mcl/core'
 
 export interface RemoteVersion {
   id: string
@@ -48,9 +69,19 @@ export interface AiSettings {
   model: string
 }
 
+/** 外置登录结果：直接成功，或返回待选角色列表（token 暂存主进程内存）。 */
+export type YggdrasilLoginResult =
+  | { status: 'ok' }
+  | { status: 'select-profile'; profiles: Array<{ id: string; name: string }> }
+
+/** 渲染进程可见的账户信息（不含 token）。 */
+export type AccountPayload = OfflineAccount | Omit<YggdrasilAccount, 'accessToken' | 'clientToken'>
+
 interface SettingsFile {
   javaPath?: string
   ai?: AiSettings
+  /** 本启动器实例的 clientToken（首次登录时生成，长期复用）。 */
+  clientToken?: string
 }
 
 /** 启动器运行时状态与编排：IPC 路由层只调用这里的方法。 */
@@ -115,12 +146,160 @@ export class LauncherService {
     return accounts[0] ?? null
   }
 
-  /** 保存（单玩家 MVP：覆盖式单账户）。 */
-  async saveAccount(name: string): Promise<Account> {
+  /** 渲染进程可见的账户信息（剥离 accessToken/clientToken）。 */
+  async getAccountPayload(): Promise<AccountPayload | null> {
+    const account = await this.getAccount()
+    if (!account) return null
+    if (account.kind === 'yggdrasil') {
+      const { accessToken: _a, clientToken: _c, ...rest } = account
+      return rest
+    }
+    return account
+  }
+
+  /** 保存离线账户（单玩家 MVP：覆盖式单账户）。 */
+  async saveAccount(name: string): Promise<OfflineAccount> {
     if (typeof name !== 'string') throw new Error('invalid account name')
     validatePlayerName(name)
-    await saveAccounts(this.rootDir, [{ name, uuid: '' }])
-    return { name, uuid: '' }
+    const account: OfflineAccount = { kind: 'offline', name, uuid: '' }
+    await saveAccounts(this.rootDir, [account])
+    return { kind: 'offline', name, uuid: '' }
+  }
+
+  // ---- 外置登录（M3：authlib-injector / Yggdrasil）----
+
+  /** 等待角色选择的挂起态：登录成功但服务端要求选择 profile 时暂存 token（仅内存）。 */
+  private pendingYgAuth: { apiRoot: string; serverName?: string; auth: AuthenticateResponse } | null = null
+
+  private async clientToken(): Promise<string> {
+    const settings = this.readSettings()
+    if (settings.clientToken) return settings.clientToken
+    const token = generateClientToken()
+    await this.writeSettings({ ...settings, clientToken: token })
+    return token
+  }
+
+  /**
+   * 外置登录：ALI 解析地址 → 取服务器元数据 → 密码认证。
+   * 服务端已绑定 profile 时直接完成；多 profile 时挂起等待用户选择（selectYggdrasilProfile）。
+   */
+  async yggdrasilLogin(serverInput: string, username: string, password: string): Promise<YggdrasilLoginResult> {
+    if (typeof serverInput !== 'string' || typeof username !== 'string' || typeof password !== 'string') {
+      throw new Error('invalid login params')
+    }
+    const apiRoot = await resolveApiRoot(serverInput)
+    const { meta } = await fetchServerMeta(apiRoot)
+    const clientToken = await this.clientToken()
+    const auth = await authenticate(apiRoot, { username, password, clientToken })
+
+    if (auth.selectedProfile) {
+      await this.completeYggdrasilLogin(apiRoot, meta.meta.serverName, auth, auth.selectedProfile)
+      return { status: 'ok' }
+    }
+    if (auth.availableProfiles.length === 0) {
+      throw new Error('该账户在认证服务器上没有任何角色：请先在该服务器注册并创建角色，或使用服务器提供的测试账号')
+    }
+    this.pendingYgAuth = { apiRoot, serverName: meta.meta.serverName, auth }
+    return {
+      status: 'select-profile',
+      profiles: auth.availableProfiles.map((p) => ({ id: p.id, name: p.name }))
+    }
+  }
+
+  /** 用户从角色列表中选定后：refresh 绑定 profile → 落盘。 */
+  async selectYggdrasilProfile(profileId: string): Promise<void> {
+    const pending = this.pendingYgAuth
+    if (!pending) throw new Error('没有待选择角色的登录')
+    const profile = pending.auth.availableProfiles.find((p) => p.id === profileId)
+    if (!profile) throw new Error('角色不存在')
+    const refreshed = await refresh(pending.apiRoot, {
+      accessToken: pending.auth.accessToken,
+      clientToken: pending.auth.clientToken,
+      selectedProfile: { id: profile.id, name: profile.name }
+    })
+    const selected = refreshed.selectedProfile ?? profile
+    this.pendingYgAuth = null
+    await this.completeYggdrasilLogin(pending.apiRoot, pending.serverName, refreshed, selected)
+  }
+
+  /** 用认证结果组装 YggdrasilAccount 覆盖保存（单活跃账户），并推送给 UI。 */
+  private async completeYggdrasilLogin(
+    apiRoot: string,
+    serverName: string | undefined,
+    auth: { accessToken: string; clientToken: string },
+    profile: YgProfile
+  ): Promise<void> {
+    const account: YggdrasilAccount = {
+      kind: 'yggdrasil',
+      name: profile.name,
+      uuid: profile.id, // 规范序列化：无连字符 UUID
+      apiRoot,
+      accessToken: auth.accessToken,
+      clientToken: auth.clientToken,
+      ...(serverName ? { serverName } : {})
+    }
+    await saveAccounts(this.rootDir, [account])
+    this.send('event:account-changed', this.toPayload(account))
+  }
+
+  /** 登出：Yggdrasil 先尽力吊销 token，然后清空账户。 */
+  async logoutAccount(): Promise<void> {
+    const account = await this.getAccount()
+    if (account?.kind === 'yggdrasil') {
+      await invalidate(account.apiRoot, {
+        accessToken: account.accessToken,
+        clientToken: account.clientToken
+      }).catch(() => undefined) // 吊销失败不阻塞登出
+    }
+    await saveAccounts(this.rootDir, [])
+    this.send('event:account-changed', null)
+  }
+
+  /** 当前账户的皮肤信息（Yggdrasil 账户；离线账户无皮肤返回 null）。 */
+  async fetchCurrentSkin(): Promise<ProfileWithSkin | null> {
+    const account = await this.getAccount()
+    if (account?.kind !== 'yggdrasil') return null
+    return fetchProfileWithSkin(account.apiRoot, account.uuid)
+  }
+
+  /**
+   * 启动前凭据链（启动器技术规范）：validate 成功 → 照常启动；validate 未确认有效
+   * （含网络失败）→ 继续 refresh 续期；refresh 失败 → 要求重登。
+   * validate 网络超时不代表 token 无效，不能直接终止启动。
+   */
+  private async ensureYggdrasilCredential(account: YggdrasilAccount): Promise<YggdrasilAccount> {
+    let ok = false
+    try {
+      ok = await validate(account.apiRoot, {
+        accessToken: account.accessToken,
+        clientToken: account.clientToken
+      })
+    } catch {
+      ok = false // 网络失败：走 refresh 兜底
+    }
+    if (ok) return account
+    let refreshed: Awaited<ReturnType<typeof refresh>>
+    try {
+      refreshed = await refresh(account.apiRoot, {
+        accessToken: account.accessToken,
+        clientToken: account.clientToken
+      })
+    } catch {
+      throw new Error(
+        `无法确认外置登录凭据（${account.serverName ?? account.apiRoot}）：认证服务器暂时连不上或凭据已失效，请稍后重试或重新登录`
+      )
+    }
+    const updated: YggdrasilAccount = { ...account, accessToken: refreshed.accessToken }
+    await saveAccounts(this.rootDir, [updated])
+    return updated
+  }
+
+  private toPayload(account: Account): AccountPayload {
+    if (account.kind === 'yggdrasil') {
+      const { accessToken: _a, clientToken: _c, ...rest } = account
+      return rest
+    }
+    return account
   }
 
   private async ensureManifest(): Promise<VersionManifest> {
@@ -175,23 +354,38 @@ export class LauncherService {
     return json
   }
 
-  /** 安装一个版本（并发锁：同一时间一个安装任务），进度经事件推送。 */
+  /** 版本安装 / 运行时下载的取消控制（M2 收尾：下载取消）。 */
+  private installAbort: AbortController | null = null
+  private javaInstallAbort: AbortController | null = null
+
+  /** 安装一个版本（并发锁：同一时间一个安装任务），进度经事件推送；可经 cancelInstallVersion 取消。 */
   async installVersion(id: string): Promise<void> {
     if (typeof id !== 'string' || id.length === 0) throw new Error('invalid version id')
     if (this.installing) throw new Error('已有安装任务在进行中')
     this.installing = true
+    const controller = new AbortController()
+    this.installAbort = controller
     try {
       const versionJson = await this.resolveVersionJson(id)
       await installVersion(versionJson, this.rootDir, {
-        onProgress: (p) => this.send('event:install-progress', p)
+        onProgress: (p) => this.send('event:install-progress', p),
+        signal: controller.signal
       })
       this.send('event:install-done', { id, ok: true })
     } catch (err) {
-      this.send('event:install-done', { id, ok: false, error: (err as Error).message })
-      throw err
+      const cancelled = controller.signal.aborted
+      const message = cancelled ? '安装已取消' : (err as Error).message
+      this.send('event:install-done', { id, ok: false, error: message })
+      throw cancelled ? new Error('安装已取消') : err
     } finally {
       this.installing = false
+      this.installAbort = null
     }
+  }
+
+  /** 取消进行中的版本安装（已下 .part 保留，下次安装续传）。 */
+  cancelInstallVersion(): void {
+    this.installAbort?.abort()
   }
 
   private async loadInstalledVersionJson(id: string): Promise<VersionJson> {
@@ -203,9 +397,20 @@ export class LauncherService {
   async launchVersion(id: string): Promise<{ logFile: string }> {
     if (typeof id !== 'string') throw new Error('invalid version id')
     if (this.game) throw new Error('已有游戏在运行')
-    const account = await this.getAccount()
-    if (!account) throw new Error('请先创建离线账户')
+    let account = await this.getAccount()
+    if (!account) throw new Error('请先创建账户')
     const versionJson = await this.loadInstalledVersionJson(id)
+
+    // 外置登录：先走凭据链（validate → refresh → 重登提示），再备齐 authlib-injector jar 与预取元数据
+    let javaAgent: JavaAgentOptions | undefined
+    if (account.kind === 'yggdrasil') {
+      account = await this.ensureYggdrasilCredential(account)
+      const [injector, meta] = await Promise.all([
+        ensureAuthlibInjector(this.rootDir),
+        fetchServerMeta(account.apiRoot)
+      ])
+      javaAgent = { jarPath: injector.jarPath, apiRoot: account.apiRoot, prefetched: meta.prefetched }
+    }
 
     const java = await this.resolveJava(versionJson)
 
@@ -216,7 +421,8 @@ export class LauncherService {
       gameDir: instanceDir,
       rootDir: this.rootDir,
       launcherName: 'MCL',
-      launcherVersion: '0.1.0'
+      launcherVersion: '0.1.0',
+      ...(javaAgent ? { javaAgent } : {})
     })
 
     this.logBuffer = []
@@ -265,19 +471,30 @@ export class LauncherService {
     return listInstalledRuntimes(this.rootDir)
   }
 
-  /** 下载内置 Java 运行时（Temurin JRE，约 45MB），进度经事件推送。 */
+  /** 下载内置 Java 运行时（Temurin JRE，约 45MB），进度经事件推送；可经 cancelRuntimeInstall 取消。 */
   async installRuntimeFor(major: number): Promise<RuntimeInfo> {
     if (!Number.isInteger(major) || major < 8) throw new Error(`invalid java major: ${major}`)
     if (this.javaInstalling) throw new Error('已有运行时下载在进行中')
     this.javaInstalling = true
+    const controller = new AbortController()
+    this.javaInstallAbort = controller
     try {
       const info = await installRuntime(this.rootDir, major, {
-        onProgress: (p) => this.send('event:java-install-progress', p)
+        onProgress: (p) => this.send('event:java-install-progress', p),
+        signal: controller.signal
       })
       return info
+    } catch (err) {
+      throw controller.signal.aborted ? new Error('运行时下载已取消') : err
     } finally {
       this.javaInstalling = false
+      this.javaInstallAbort = null
     }
+  }
+
+  /** 取消进行中的内置运行时下载。 */
+  cancelRuntimeInstall(): void {
+    this.javaInstallAbort?.abort()
   }
 
   stopGame(): void {
@@ -295,6 +512,8 @@ export class LauncherService {
   // ---- AI 面板（M2-2）----
 
   private aiSession: ChatSession | null = null
+  /** 主进程侧并发锁：多窗口 / 渲染层竞态下防两条请求交叠（M2 收尾）。 */
+  private aiRequesting = false
 
   getAiConfig(): AiConfigPayload {
     const { ai } = this.readSettings()
@@ -380,31 +599,37 @@ export class LauncherService {
     ].join('\n')
   }
 
-  /** 发送一条用户消息：主进程跑完整 tool 循环，流式增量与最终回复经事件推送。 */
+  /** 发送一条用户消息：主进程跑完整 tool 循环，流式增量与最终回复经事件推送。主进程侧并发锁（M2 收尾）。 */
   async aiSend(text: string): Promise<{ content: string }> {
     if (typeof text !== 'string' || text.trim() === '') throw new Error('empty message')
+    if (this.aiRequesting) throw new Error('已有 AI 请求进行中，请等待当前回复完成')
     const { ai } = this.readSettings()
     if (!ai?.baseUrl || !ai?.apiKey || !ai?.model) {
       throw new Error('请先在 AI 卡片配置 baseURL / apiKey / model')
     }
-    if (!this.aiSession) {
-      this.aiSession = new ChatSession(this.aiSystemPrompt())
-    }
-    this.aiSession.addUser(text)
-
-    const client = new ChatClient({ baseUrl: ai.baseUrl, apiKey: ai.apiKey, model: ai.model })
+    this.aiRequesting = true
     try {
-      const result = await client.send(this.aiSession.messages(), this.buildAiTools(), {
-        onDelta: (t) => this.send('event:ai-delta', { text: t })
-      })
-      this.aiSession.addAssistant(result.content)
-      return { content: result.content }
-    } catch (err) {
-      // 失败也要通知 UI 恢复输入状态（401/网络错误等），并回退本条用户消息
-      const message = err instanceof Error ? err.message : String(err)
-      this.send('event:ai-error', { message })
-      this.aiSession.messages().pop() // 移除刚加的 user 消息，会话不留悬空
-      throw err
+      if (!this.aiSession) {
+        this.aiSession = new ChatSession(this.aiSystemPrompt())
+      }
+      this.aiSession.addUser(text)
+
+      const client = new ChatClient({ baseUrl: ai.baseUrl, apiKey: ai.apiKey, model: ai.model })
+      try {
+        const result = await client.send(this.aiSession.messages(), this.buildAiTools(), {
+          onDelta: (t) => this.send('event:ai-delta', { text: t })
+        })
+        this.aiSession.addAssistant(result.content)
+        return { content: result.content }
+      } catch (err) {
+        // 失败也要通知 UI 恢复输入状态（401/网络错误等），并回退本条用户消息
+        const message = err instanceof Error ? err.message : String(err)
+        this.send('event:ai-error', { message })
+        this.aiSession.messages().pop() // 移除刚加的 user 消息，会话不留悬空
+        throw err
+      }
+    } finally {
+      this.aiRequesting = false
     }
   }
 

@@ -44,9 +44,9 @@ describe('validatePlayerName', () => {
 describe('账户持久化', () => {
   it('saveAccounts 覆盖 uuid 为离线 UUID，loadAccounts 读回一致', async () => {
     const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
-    await saveAccounts(dir, [{ name: 'Notch', uuid: 'will-be-overwritten' }])
+    await saveAccounts(dir, [{ kind: 'offline', name: 'Notch', uuid: 'will-be-overwritten' }])
     const accounts = await loadAccounts(dir)
-    expect(accounts).toEqual([{ name: 'Notch', uuid: GOLDEN.Notch }])
+    expect(accounts).toEqual([{ kind: 'offline', name: 'Notch', uuid: GOLDEN.Notch }])
   })
 
   it('文件不存在 / 非法 JSON / 结构不对时 loadAccounts 返回空数组', async () => {
@@ -62,9 +62,77 @@ describe('账户持久化', () => {
 
   it('saveAccounts 对非法玩家名抛错且不写文件', async () => {
     const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
-    await expect(saveAccounts(dir, [{ name: 'ab', uuid: '' }])).rejects.toBeInstanceOf(
-      InvalidPlayerNameError
-    )
+    await expect(
+      saveAccounts(dir, [{ kind: 'offline', name: 'ab', uuid: '' }])
+    ).rejects.toBeInstanceOf(InvalidPlayerNameError)
     await expect(loadAccounts(dir)).resolves.toEqual([])
+  })
+})
+
+describe('Yggdrasil 账户持久化（M3 外置登录）', () => {
+  const ygAccount = {
+    kind: 'yggdrasil' as const,
+    name: 'Steve',
+    uuid: 'a'.repeat(32), // 服务端 profile UUID，无连字符（规范序列化形式）
+    apiRoot: 'https://auth.example.com/api/yggdrasil/',
+    accessToken: 'token-1',
+    clientToken: 'ct-1',
+    serverName: '测试服'
+  }
+
+  it('roundtrip：服务端 uuid/token/apiRoot 原样保留，不被离线 UUID 覆盖', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    const serverAccount = { ...ygAccount, uuid: 'server-provided-uuid' }
+    await saveAccounts(dir, [serverAccount])
+    const accounts = await loadAccounts(dir)
+    expect(accounts).toEqual([serverAccount]) // uuid 仍为写入的服务端值
+    expect(accounts[0].kind).toBe('yggdrasil')
+  })
+
+  it('离线与 Yggdrasil 账户可共存写入（单活跃账户由上层保证）', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    const offline = { kind: 'offline' as const, name: 'Notch', uuid: 'x' }
+    await saveAccounts(dir, [offline, ygAccount])
+    const accounts = await loadAccounts(dir)
+    expect(accounts).toEqual([
+      { kind: 'offline', name: 'Notch', uuid: GOLDEN.Notch },
+      ygAccount
+    ])
+  })
+
+  it('旧格式（无 kind 字段，M1/M2 时代）读入时视为离线账户', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    await fs.writeFile(
+      join(dir, 'accounts.json'),
+      JSON.stringify({ accounts: [{ name: 'Notch', uuid: 'ignored' }] })
+    )
+    const accounts = await loadAccounts(dir)
+    expect(accounts).toEqual([{ kind: 'offline', name: 'Notch', uuid: 'ignored' }])
+  })
+
+  it('字段残缺的 yggdrasil 条目（缺 apiRoot/token）被过滤', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    await fs.writeFile(
+      join(dir, 'accounts.json'),
+      JSON.stringify({
+        accounts: [
+          { kind: 'yggdrasil', name: 'Broken', uuid: 'u' },
+          ygAccount
+        ]
+      })
+    )
+    const accounts = await loadAccounts(dir)
+    expect(accounts).toEqual([ygAccount])
+  })
+
+  it('yggdrasil 账户名字允许服务器自定义（非 ASCII 也接受），空名拒绝', async () => {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'mcl-core-'))
+    const cnName = { ...ygAccount, name: '中文名玩家' }
+    await saveAccounts(dir, [cnName])
+    expect((await loadAccounts(dir))[0].name).toBe('中文名玩家')
+
+    await expect(
+      saveAccounts(dir, [{ ...ygAccount, name: '' }])
+    ).rejects.toBeInstanceOf(InvalidPlayerNameError)
   })
 })

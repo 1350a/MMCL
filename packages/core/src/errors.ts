@@ -48,3 +48,16 @@ export class JavaVersionMismatchError extends Error {
     this.name = 'JavaVersionMismatchError'
   }
 }
+
+/** Yggdrasil 认证服务器返回的业务错误（{error, errorMessage} 结构）。 */
+export class YggdrasilError extends Error {
+  constructor(
+    readonly status: number,
+    readonly error: string,
+    readonly errorMessage: string | undefined,
+    readonly url: string
+  ) {
+    super(`Yggdrasil ${error} (HTTP ${status})${errorMessage ? `: ${errorMessage}` : ''} [${url}]`)
+    this.name = 'YggdrasilError'
+  }
+}

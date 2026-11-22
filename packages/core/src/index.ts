@@ -7,6 +7,7 @@ export { hashFile, fileSha1, verifyFile } from './verify'
 export type { HashAlgorithm } from './verify'
 
 export { ChecksumMismatchError, HttpError, InvalidPlayerNameError } from './errors'
+export { YggdrasilError } from './errors'
 
 export {
   offlineUuid,
@@ -15,7 +16,34 @@ export {
   saveAccounts,
   PLAYER_NAME_PATTERN
 } from './account'
-export type { Account } from './account'
+export type { Account, OfflineAccount, YggdrasilAccount } from './account'
+
+export {
+  authenticate,
+  fetchProfileWithSkin,
+  fetchServerMeta,
+  generateClientToken,
+  invalidate,
+  refresh,
+  resolveApiRoot,
+  validate
+} from './yggdrasil'
+export type {
+  AuthServerMeta,
+  AuthenticateResponse,
+  ProfileWithSkin,
+  RefreshResponse,
+  SkinInfo,
+  YgProfile,
+  YgUser
+} from './yggdrasil'
+
+export { ensureAuthlibInjector } from './authlibInjector'
+export type {
+  AuthlibInjectorArtifact,
+  AuthlibInjectorInfo,
+  AuthlibInjectorInstallOptions
+} from './authlibInjector'
 
 export {
   DEFAULT_MANIFEST_URL,
@@ -31,7 +59,7 @@ export { installVersion, extractNatives, mavenPath } from './install'
 export type { InstallOptions, InstallProgress, InstallResult } from './install'
 
 export { assembleLaunch } from './launch'
-export type { AssembleOptions, LaunchSpec } from './launch'
+export type { AssembleOptions, JavaAgentOptions, LaunchSpec } from './launch'
 
 export { assertJavaCompatible, detectJava, parseJavaVersionText, probeJava } from './java'
 export type { JavaInfo } from './java'

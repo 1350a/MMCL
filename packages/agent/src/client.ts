@@ -16,6 +16,16 @@ export interface ChatClientOptions {
   model: string
   /** 单次 send 的工具调用轮数上限，防失控循环。 */
   maxToolRounds?: number
+  /**
+   * 发送给 API 的历史条数上限（不含 system）：system + 最近 N 条。
+   * undefined / 0 = 不截断。会话本地仍保留全量。
+   */
+  maxHistoryMessages?: number
+  /**
+   * 空闲超时（毫秒）：建立连接后若这么久没有任何 SSE 增量则中止报错，默认 60s。
+   * 防"连接挂着但模型不吐字"的假死。
+   */
+  idleTimeoutMs?: number
 }
 
 export interface ChatCallbacks {
@@ -32,6 +42,22 @@ export interface ChatResult {
 }
 
 const TOOL_ROUNDS_DEFAULT = 8
+/** 历史截断默认保留最近条数。 */
+const MAX_HISTORY_DEFAULT = 20
+/** 空闲超时默认值：60s 无增量即视为假死。 */
+const IDLE_TIMEOUT_DEFAULT = 60_000
+
+/** idleTimer 触发 abort 时携带的标记，用于与其他中止来源区分。 */
+const IDLE_ABORT_REASON = new Error('ai-idle-timeout')
+
+/** 把输入消息列表截为 system（若有）+ 最近 N 条（截断只影响发送视图，不动调用方的数组）。 */
+function truncateHistory(messages: ChatMessage[], max: number): ChatMessage[] {
+  if (max <= 0 || messages.length <= max) return messages
+  const hasLeadingSystem = messages[0]?.role === 'system'
+  const system = hasLeadingSystem ? [messages[0]] : []
+  const rest = hasLeadingSystem ? messages.slice(1) : messages
+  return [...system, ...rest.slice(-max)]
+}
 
 /** OpenAI 兼容 chat completions 客户端：fetch + SSE 自实现，无 SDK。 */
 export class ChatClient {
@@ -59,72 +85,102 @@ export class ChatClient {
     for (let round = 0; round <= (this.options.maxToolRounds ?? TOOL_ROUNDS_DEFAULT); round++) {
       const body: Record<string, unknown> = {
         model: this.options.model,
-        messages: working,
+        messages: truncateHistory(working, this.options.maxHistoryMessages ?? MAX_HISTORY_DEFAULT),
         stream: true
       }
       if (tools.length > 0) body.tools = tools.map(toOpenAiTool)
 
-      const res = await fetch(this.url(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.options.apiKey}`
-        },
-        body: JSON.stringify(body),
-        signal: callbacks.signal
-      })
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        const hint = res.status === 401 || res.status === 403 ? '（apiKey 无效或已过期，请检查 AI 配置）' : ''
-        throw new Error(`chat completions failed: HTTP ${res.status}${hint} ${text.slice(0, 300)}`)
+      // 空闲超时：连接后 60s 无任何 SSE 增量即中止（防模型假死挂死会话）
+      const idleController = new AbortController()
+      const idleSignal = idleController.signal
+      const combinedSignal = callbacks.signal
+        ? AbortSignal.any([callbacks.signal, idleSignal])
+        : idleSignal
+      let idleTimer: ReturnType<typeof setTimeout> | null = null
+      const armIdle = (): void => {
+        if (idleTimer) clearTimeout(idleTimer)
+        idleTimer = setTimeout(
+          () => idleController.abort(IDLE_ABORT_REASON),
+          this.options.idleTimeoutMs ?? IDLE_TIMEOUT_DEFAULT
+        )
       }
-      if (!res.body) throw new Error('empty response body')
 
-      const stream = res.body as unknown as AsyncIterable<Uint8Array>
+      let res: Response
       let roundContent = ''
       const pendingCalls = new Map<number, { id: string; name: string; args: string }>()
       let finish = 'stop'
+      try {
+        armIdle()
+        res = await fetch(this.url(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.options.apiKey}`
+          },
+          body: JSON.stringify(body),
+          signal: combinedSignal
+        })
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          const hint = res.status === 401 || res.status === 403 ? '（apiKey 无效或已过期，请检查 AI 配置）' : ''
+          throw new Error(`chat completions failed: HTTP ${res.status}${hint} ${text.slice(0, 300)}`)
+        }
+        if (!res.body) throw new Error('empty response body')
 
-      // SSE 解析：事件以空行分隔，data: 前缀行承载 JSON chunk
-      let buffer = ''
-      for await (const chunk of stream) {
-        buffer += new TextDecoder().decode(chunk)
-        let idx: number
-        while ((idx = buffer.indexOf('\n\n')) >= 0) {
-          const event = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-          for (const line of event.split('\n')) {
-            if (!line.startsWith('data:')) continue
-            const data = line.slice(5).trim()
-            if (data === '' || data === '[DONE]') continue
-            let parsed: {
-              choices?: Array<{
-                delta?: { content?: string | null; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> }
-                finish_reason?: string | null
-              }>
-            }
-            try {
-              parsed = JSON.parse(data)
-            } catch {
-              continue // 非 JSON 行（如注释）忽略
-            }
-            const choice = parsed.choices?.[0]
-            if (!choice) continue
-            if (choice.finish_reason) finish = choice.finish_reason
-            const delta = choice.delta
-            if (delta?.content) {
-              roundContent += delta.content
-              callbacks.onDelta?.(delta.content)
-            }
-            for (const call of delta?.tool_calls ?? []) {
-              const acc = pendingCalls.get(call.index) ?? { id: '', name: '', args: '' }
-              if (call.id) acc.id = call.id
-              if (call.function?.name) acc.name += call.function.name
-              if (call.function?.arguments) acc.args += call.function.arguments
-              pendingCalls.set(call.index, acc)
+        const stream = res.body as unknown as AsyncIterable<Uint8Array>
+
+        // SSE 解析：事件以空行分隔，data: 前缀行承载 JSON chunk
+        let buffer = ''
+        for await (const chunk of stream) {
+          armIdle() // 收到任何增量即喂狗
+          buffer += new TextDecoder().decode(chunk)
+          let idx: number
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            const event = buffer.slice(0, idx)
+            buffer = buffer.slice(idx + 2)
+            for (const line of event.split('\n')) {
+              if (!line.startsWith('data:')) continue
+              const data = line.slice(5).trim()
+              if (data === '' || data === '[DONE]') continue
+              let parsed: {
+                choices?: Array<{
+                  delta?: { content?: string | null; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> }
+                  finish_reason?: string | null
+                }>
+              }
+              try {
+                parsed = JSON.parse(data)
+              } catch {
+                continue // 非 JSON 行（如注释）忽略
+              }
+              const choice = parsed.choices?.[0]
+              if (!choice) continue
+              if (choice.finish_reason) finish = choice.finish_reason
+              const delta = choice.delta
+              if (delta?.content) {
+                roundContent += delta.content
+                callbacks.onDelta?.(delta.content)
+              }
+              for (const call of delta?.tool_calls ?? []) {
+                const acc = pendingCalls.get(call.index) ?? { id: '', name: '', args: '' }
+                if (call.id) acc.id = call.id
+                if (call.function?.name) acc.name += call.function.name
+                if (call.function?.arguments) acc.args += call.function.arguments
+                pendingCalls.set(call.index, acc)
+              }
             }
           }
         }
+        if (idleTimer) clearTimeout(idleTimer) // 本轮网络结束，工具本地执行期间不计时
+      } catch (err) {
+        // 空闲超时的 abort 转成可读错误；其他错误（含外部 signal 中止）原样抛
+        if (idleSignal.aborted && idleSignal.reason === IDLE_ABORT_REASON) {
+          const seconds = Math.round((this.options.idleTimeoutMs ?? IDLE_TIMEOUT_DEFAULT) / 1000)
+          throw new Error(`AI 响应超时：${seconds} 秒无增量，已中止本次请求`)
+        }
+        throw err
+      } finally {
+        if (idleTimer) clearTimeout(idleTimer)
       }
 
       content += roundContent

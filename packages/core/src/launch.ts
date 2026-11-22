@@ -18,6 +18,16 @@ export interface LaunchSpec {
   cwd: string
 }
 
+/** authlib-injector 注入参数（外置登录）。 */
+export interface JavaAgentOptions {
+  /** authlib-injector.jar 绝对路径。 */
+  jarPath: string
+  /** 认证服务器 API 根（带尾斜杠）。 */
+  apiRoot: string
+  /** API 元数据响应原文的 base64（prefetched，避免游戏启动时再联网取）。 */
+  prefetched?: string
+}
+
 export interface AssembleOptions {
   javaPath: string
   account: Account
@@ -25,7 +35,7 @@ export interface AssembleOptions {
   gameDir: string
   /** launcher 根目录（libraries / assets 所在）。 */
   rootDir: string
-  /** 离线场景的 accessToken，默认 '0'。 */
+  /** 离线场景的 accessToken，默认 '0'（Yggdrasil 账户使用账户内 token，此参数忽略）。 */
   accessToken?: string
   /** 特性开关（如 has_custom_resolution），用于 rules 评估。 */
   features?: Record<string, boolean>
@@ -33,6 +43,8 @@ export interface AssembleOptions {
   extraJvmArgs?: string[]
   /** 用户附加游戏参数，放在最后。 */
   extraGameArgs?: string[]
+  /** authlib-injector 注入（外置登录时提供）。 */
+  javaAgent?: JavaAgentOptions
   /** 覆盖平台检测（测试用）；version 缺省时 Windows 取 os.release()（如 10.0.19045）。 */
   os?: { name: string; arch: string; version?: string }
   launcherName?: string
@@ -84,13 +96,16 @@ export function assembleLaunch(versionJson: VersionJson, options: AssembleOption
   const classpath = [...classpathEntries, paths.clientJar].join(pathDelimiter)
 
   const assetsIndexId = versionJson.assetIndex?.id ?? versionJson.assets ?? ''
+  // 认证相关变量按账户类型分支：Yggdrasil 用无连字符 uuid / 服务端 token / user_type=mojang
+  // （authlib-injector 启动器技术规范）；离线账户保持 M1 已验收的行为不变。
+  const yg = options.account.kind === 'yggdrasil' ? options.account : null
   const vars: Record<string, string> = {
     auth_player_name: options.account.name,
     auth_uuid: options.account.uuid,
-    auth_access_token: options.accessToken ?? '0',
+    auth_access_token: yg ? yg.accessToken : (options.accessToken ?? '0'),
     auth_xuid: '0',
     auth_client_id: '0',
-    user_type: 'legacy',
+    user_type: yg ? 'mojang' : 'legacy',
     version_name: id,
     version_type: versionJson.type,
     game_directory: options.gameDir,
@@ -107,6 +122,12 @@ export function assembleLaunch(versionJson: VersionJson, options: AssembleOption
 
   // JVM 参数
   const jvmArgs: string[] = [...(options.extraJvmArgs ?? [])]
+  if (options.javaAgent) {
+    jvmArgs.push(`-javaagent:${options.javaAgent.jarPath}=${options.javaAgent.apiRoot}`)
+    if (options.javaAgent.prefetched) {
+      jvmArgs.push(`-Dauthlibinjector.yggdrasil.prefetched=${options.javaAgent.prefetched}`)
+    }
+  }
   if (versionJson.logging?.client) {
     // logging.client.argument 形如 '-Dlog4j.configurationFile=${path}'
     const logConfigPath = join(paths.assetsRoot, 'log_configs', versionJson.logging.client.file.id)
