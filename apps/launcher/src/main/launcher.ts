@@ -5,33 +5,46 @@ import {
   assembleLaunch,
   assertJavaCompatible,
   authenticate,
+  BMCLAPI_MAVEN_BASE,
   detectJava,
   ensureAuthlibInjector,
+  fetchFabricLoaderVersions,
   fetchProfileWithSkin,
   fetchServerMeta,
   fetchVersionJson,
   fetchVersionManifest,
   findVersionEntry,
   generateClientToken,
+  installFabric,
+  installLocalMod,
+  installModFile,
   installRuntime,
   installVersion,
   invalidate,
   JavaVersionMismatchError,
   launchGame,
   listInstalledRuntimes,
+  listMods,
+  listModVersions,
   loadAccounts,
   mergeVersionJson,
   pickRuntime,
+  readOptionsTxt,
   refresh,
+  removeMod,
   resolveApiRoot,
+  resolveInstalledVersion,
   saveAccounts,
+  searchMods,
   validate,
-  validatePlayerName
+  validatePlayerName,
+  writeOptionsTxt
 } from '@mcl/core'
 import type {
   Account,
   AuthenticateResponse,
   JavaAgentOptions,
+  ModFileInfo,
   OfflineAccount,
   ProfileWithSkin,
   RuntimeInfo,
@@ -369,7 +382,9 @@ export class LauncherService {
       const versionJson = await this.resolveVersionJson(id)
       await installVersion(versionJson, this.rootDir, {
         onProgress: (p) => this.send('event:install-progress', p),
-        signal: controller.signal
+        signal: controller.signal,
+        // 官方库源在校园网实测会被劫持/不可达，失败回退 BMCLAPI 镜像（官方源仍优先）
+        libraryAltBaseUrls: [BMCLAPI_MAVEN_BASE]
       })
       this.send('event:install-done', { id, ok: true })
     } catch (err) {
@@ -388,9 +403,9 @@ export class LauncherService {
     this.installAbort?.abort()
   }
 
-  private async loadInstalledVersionJson(id: string): Promise<VersionJson> {
-    const raw = readFileSync(join(this.rootDir, 'versions', id, `${id}.json`), 'utf8')
-    return JSON.parse(raw) as VersionJson
+  /** 游戏实例目录（mods/options.txt/logs 都在这里）。 */
+  private instanceDir(): string {
+    return join(this.rootDir, 'instances', 'main')
   }
 
   /** 启动游戏（需已安装版本 + 已保存账户）。日志经事件推送并缓冲。 */
@@ -399,7 +414,9 @@ export class LauncherService {
     if (this.game) throw new Error('已有游戏在运行')
     let account = await this.getAccount()
     if (!account) throw new Error('请先创建账户')
-    const versionJson = await this.loadInstalledVersionJson(id)
+    // 解析继承链（fabric 等子版本）：合并父版本库/参数，client jar 取继承链根的
+    const resolved = await resolveInstalledVersion(this.rootDir, id)
+    const versionJson = resolved.json
 
     // 外置登录：先走凭据链（validate → refresh → 重登提示），再备齐 authlib-injector jar 与预取元数据
     let javaAgent: JavaAgentOptions | undefined
@@ -414,15 +431,15 @@ export class LauncherService {
 
     const java = await this.resolveJava(versionJson)
 
-    const instanceDir = join(this.rootDir, 'instances', 'main')
     const spec = assembleLaunch(versionJson, {
       javaPath: java.path,
       account,
-      gameDir: instanceDir,
+      gameDir: this.instanceDir(),
       rootDir: this.rootDir,
       launcherName: 'MCL',
       launcherVersion: '0.1.0',
-      ...(javaAgent ? { javaAgent } : {})
+      ...(javaAgent ? { javaAgent } : {}),
+      clientJarPath: resolved.clientJarPath
     })
 
     this.logBuffer = []
@@ -497,6 +514,64 @@ export class LauncherService {
     this.javaInstallAbort?.abort()
   }
 
+  // ---- Fabric 加载器与 mod 管理（M4）----
+
+  /**
+   * 为已安装的原版版本安装 Fabric 加载器（loaderVersion 缺省取最新稳定版）。
+   * 复用版本安装锁与取消控制器；进度/完成事件与版本安装共用同一组 channel。
+   */
+  async installFabricVersion(gameVersion: string, loaderVersion?: string): Promise<{ versionId: string }> {
+    if (typeof gameVersion !== 'string' || gameVersion.length === 0) throw new Error('invalid game version')
+    if (this.installing) throw new Error('已有安装任务在进行中')
+    const wanted = typeof loaderVersion === 'string' && loaderVersion.trim() !== '' ? loaderVersion.trim() : undefined
+    const chosen =
+      wanted ?? (await fetchFabricLoaderVersions(gameVersion)).find((v) => v.stable)?.version
+    if (!chosen) throw new Error(`没有可用的 Fabric loader${wanted ? `（${wanted}）` : ''}`)
+    this.installing = true
+    const controller = new AbortController()
+    this.installAbort = controller
+    try {
+      const result = await installFabric(this.rootDir, gameVersion, chosen, {
+        onProgress: (p) => this.send('event:install-progress', p),
+        signal: controller.signal
+      })
+      this.send('event:install-done', { id: result.versionId, ok: true })
+      return { versionId: result.versionId }
+    } catch (err) {
+      const cancelled = controller.signal.aborted
+      const message = cancelled ? '安装已取消' : (err as Error).message
+      // 失败时拿不到确定的 fabric id，用占位 id 只为 UI 展示错误
+      this.send('event:install-done', { id: `fabric-loader-?-${gameVersion}`, ok: false, error: message })
+      throw cancelled ? new Error('安装已取消') : err
+    } finally {
+      this.installing = false
+      this.installAbort = null
+    }
+  }
+
+  listModsPayload(): Promise<ModFileInfo[]> {
+    return listMods(this.instanceDir())
+  }
+
+  removeModFile(filename: string): Promise<void> {
+    if (typeof filename !== 'string') throw new Error('invalid mod filename')
+    return removeMod(this.instanceDir(), filename)
+  }
+
+  installModFromLocal(jarPath: string): Promise<string> {
+    if (typeof jarPath !== 'string') throw new Error('invalid mod path')
+    return installLocalMod(this.instanceDir(), jarPath)
+  }
+
+  readGameOptions(): Promise<Array<{ key: string; value: string }>> {
+    return readOptionsTxt(this.instanceDir())
+  }
+
+  writeGameOptions(entries: Record<string, string>): Promise<Array<{ key: string; value: string }>> {
+    if (typeof entries !== 'object' || entries === null) throw new Error('invalid options entries')
+    return writeOptionsTxt(this.instanceDir(), entries)
+  }
+
   stopGame(): void {
     this.game?.handle.process.kill()
   }
@@ -543,7 +618,7 @@ export class LauncherService {
     return this.getAiConfig()
   }
 
-  /** 构造 M2 两个工具：list_versions / read_crash_log（handler 注入 launcher 数据）。 */
+  /** 构造 AI 工具集（M2 两工具 + M4 智能体操作工具）。 */
   private buildAiTools(): AiTool[] {
     return [
       {
@@ -565,7 +640,7 @@ export class LauncherService {
         description: '读取游戏日志（logs/latest.log）的尾部，以及 crash-reports 目录下最新崩溃报告的内容。',
         parameters: { type: 'object', properties: {} },
         handler: async () => {
-          const instanceDir = join(this.rootDir, 'instances', 'main')
+          const instanceDir = this.instanceDir()
           const parts: string[] = []
           try {
             const log = await fs.readFile(join(instanceDir, 'logs', 'latest.log'), 'utf8')
@@ -587,6 +662,165 @@ export class LauncherService {
           }
           return parts.join('\n\n') || '没有任何日志或崩溃报告。'
         }
+      },
+      {
+        name: 'launch_game',
+        description:
+          '启动一个已安装的版本（原版或 Fabric 版本）。versionId 缺省且只装了一个版本时自动选它；游戏已在运行时会失败。',
+        parameters: {
+          type: 'object',
+          properties: { versionId: { type: 'string', description: '要启动的版本 id（见 list_versions）' } }
+        },
+        handler: async (args) => {
+          let versionId = typeof args.versionId === 'string' && args.versionId ? args.versionId : ''
+          if (!versionId) {
+            const installed = await this.listInstalledVersions()
+            if (installed.length === 1) versionId = installed[0]
+            else {
+              return JSON.stringify({
+                error: `需要指定 versionId。已安装：${installed.join('、') || '（无）'}`
+              })
+            }
+          }
+          const { logFile } = await this.launchVersion(versionId)
+          return JSON.stringify({ ok: true, versionId, logFile })
+        }
+      },
+      {
+        name: 'install_fabric',
+        description:
+          '为已安装的原版版本安装 Fabric 加载器（生成形如 fabric-loader-<loader>-<原版> 的新版本）。loaderVersion 缺省取最新稳定版。',
+        parameters: {
+          type: 'object',
+          properties: {
+            gameVersion: { type: 'string', description: '已安装的原版版本 id，如 1.16.5' },
+            loaderVersion: { type: 'string', description: 'Fabric loader 版本，缺省最新稳定版' }
+          },
+          required: ['gameVersion']
+        },
+        handler: async (args) => {
+          if (typeof args.gameVersion !== 'string') throw new Error('gameVersion 需为字符串')
+          const result = await this.installFabricVersion(
+            args.gameVersion,
+            typeof args.loaderVersion === 'string' ? args.loaderVersion : undefined
+          )
+          return JSON.stringify({ ok: true, ...result })
+        }
+      },
+      {
+        name: 'search_mods',
+        description: '在 Modrinth 搜索 mod，返回候选（projectId/slug/title/description/author）。',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '搜索关键词' },
+            gameVersion: { type: 'string', description: '按游戏版本过滤（推荐，与目标版本一致）' },
+            loader: { type: 'string', description: '按加载器过滤，如 fabric' },
+            limit: { type: 'number', description: '返回条数，默认 10' }
+          },
+          required: ['query']
+        },
+        handler: async (args) => {
+          if (typeof args.query !== 'string') throw new Error('query 需为字符串')
+          const hits = await searchMods(args.query, {
+            gameVersion: typeof args.gameVersion === 'string' ? args.gameVersion : undefined,
+            loader: typeof args.loader === 'string' ? args.loader : undefined,
+            limit: typeof args.limit === 'number' ? args.limit : 10
+          })
+          return JSON.stringify({ hits })
+        }
+      },
+      {
+        name: 'install_mod',
+        description:
+          '从 Modrinth 下载一个 mod 到实例 mods 目录（取该版本 primary 文件，sha1 校验）。project 为项目 id 或 slug；version 可传 version_number 或版本 id，缺省取过滤后最新一个。gameVersion 与 loader 必填以防装错版本。',
+        parameters: {
+          type: 'object',
+          properties: {
+            project: { type: 'string', description: 'Modrinth 项目 id 或 slug' },
+            version: { type: 'string', description: 'version_number 或版本 id，缺省最新' },
+            gameVersion: { type: 'string', description: '目标游戏版本，如 1.16.5' },
+            loader: { type: 'string', description: '目标加载器，如 fabric' }
+          },
+          required: ['project', 'gameVersion', 'loader']
+        },
+        handler: async (args) => {
+          const project = typeof args.project === 'string' ? args.project : ''
+          const gameVersion = typeof args.gameVersion === 'string' ? args.gameVersion : undefined
+          const loader = typeof args.loader === 'string' ? args.loader : undefined
+          if (!project || !gameVersion || !loader) {
+            throw new Error('install_mod 需要 project、gameVersion、loader 三个参数')
+          }
+          const want = typeof args.version === 'string' && args.version ? args.version : undefined
+          const versions = await listModVersions(project, { gameVersion, loader })
+          if (versions.length === 0) {
+            return JSON.stringify({ error: `Modrinth 上没有 ${project} 的 ${gameVersion}/${loader} 版本` })
+          }
+          const chosen =
+            (want ? versions.find((v) => v.versionNumber === want || v.id === want) : undefined) ?? versions[0]
+          const file = chosen.files.find((f) => f.primary) ?? chosen.files[0]
+          if (!file) {
+            return JSON.stringify({ error: `版本 ${chosen.versionNumber} 没有可下载文件` })
+          }
+          const dest = await installModFile(this.instanceDir(), file)
+          return JSON.stringify({ ok: true, mod: chosen.versionNumber, filename: file.filename, dest })
+        }
+      },
+      {
+        name: 'list_mods',
+        description: '列出实例 mods 目录已装的 mod 文件。',
+        parameters: { type: 'object', properties: {} },
+        handler: async () => JSON.stringify({ mods: await this.listModsPayload() })
+      },
+      {
+        name: 'remove_mod',
+        description: '从实例 mods 目录删除一个 mod（按文件名）。',
+        parameters: {
+          type: 'object',
+          properties: { filename: { type: 'string', description: 'mods 目录下的文件名' } },
+          required: ['filename']
+        },
+        handler: async (args) => {
+          if (typeof args.filename !== 'string') throw new Error('filename 需为字符串')
+          await this.removeModFile(args.filename)
+          return JSON.stringify({ ok: true })
+        }
+      },
+      {
+        name: 'read_config',
+        description: '读取游戏设置 options.txt（实例目录；keys 缺省读全部）。',
+        parameters: {
+          type: 'object',
+          properties: { keys: { type: 'array', items: { type: 'string' }, description: '要读取的键，缺省全部' } }
+        },
+        handler: async (args) => {
+          const all = await this.readGameOptions()
+          const keys = Array.isArray(args.keys)
+            ? args.keys.filter((k): k is string => typeof k === 'string')
+            : null
+          return JSON.stringify({ options: keys ? all.filter((e) => keys.includes(e.key)) : all })
+        }
+      },
+      {
+        name: 'write_config',
+        description:
+          '写入游戏设置 options.txt（如 fov、gamma、musicVolume 等，值一律为字符串；游戏下次启动生效）。',
+        parameters: {
+          type: 'object',
+          properties: { entries: { type: 'object', additionalProperties: { type: 'string' } } },
+          required: ['entries']
+        },
+        handler: async (args) => {
+          if (typeof args.entries !== 'object' || args.entries === null) {
+            throw new Error('entries 需为 { 键: 值 } 对象')
+          }
+          const entries: Record<string, string> = {}
+          for (const [k, v] of Object.entries(args.entries as Record<string, unknown>)) {
+            entries[k] = String(v)
+          }
+          const options = await this.writeGameOptions(entries)
+          return JSON.stringify({ ok: true, options })
+        }
       }
     ]
   }
@@ -595,7 +829,10 @@ export class LauncherService {
     return [
       '你是 Minecraft 第三方启动器 MCL 的内置助手。',
       '回答简洁、可操作；涉及版本与运行状态时优先调用工具查询而不是猜测。',
-      '用户环境为 Windows；游戏实例目录在启动器数据目录的 instances/main 下。'
+      '用户环境为 Windows；游戏实例目录在启动器数据目录的 instances/main 下。',
+      '装 mod 流程：确认原版已安装 → install_fabric 装 Fabric 加载器 → search_mods（带 gameVersion+loader）→ install_mod（project/gameVersion/loader 必填）→ 建议用户启动对应的 fabric-loader 版本（launch_game）。',
+      '改游戏设置用 read_config / write_config（options.txt，游戏下次启动生效）；启动游戏用 launch_game。',
+      '对启动器或 mod 有不确定的版本兼容问题时，先向用户确认再操作。'
     ].join('\n')
   }
 

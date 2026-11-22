@@ -1,6 +1,6 @@
 export { VERSION } from './version-constants'
 
-export { downloadFile } from './download'
+export { downloadFile, assertSafeRemoteUrl, fetchJsonWithRetry } from './download'
 export type { DownloadOptions } from './download'
 
 export { hashFile, fileSha1, verifyFile } from './verify'
@@ -52,11 +52,29 @@ export {
   findVersionEntry,
   mergeVersionJson
 } from './manifest'
+export { fetchFabricLoaderVersions, fetchFabricProfileJson, installFabric } from './fabric'
+export type { FabricLoaderVersion, FabricInstallOptions } from './fabric'
 export { evaluateRules } from './rules'
 export type { RuleContext } from './rules'
 
-export { installVersion, extractNatives, mavenPath } from './install'
+export { BMCLAPI_MAVEN_BASE, installVersion, extractNatives, mavenPath, nativesJarRelPath } from './install'
 export type { InstallOptions, InstallProgress, InstallResult } from './install'
+
+export { resolveInstalledVersion } from './installed'
+export type { InstalledVersionResolution } from './installed'
+
+export {
+  MODRINTH_USER_AGENT,
+  installModFile,
+  listModVersions,
+  searchMods
+} from './modrinth'
+export type { ModrinthSearchHit, ModrinthVersion, ModrinthVersionFile } from './modrinth'
+
+export { installLocalMod, listMods, removeMod } from './mods'
+export type { ModFileInfo } from './mods'
+
+export { readOptionsTxt, writeOptionsTxt } from './optionsTxt'
 
 export { assembleLaunch } from './launch'
 export type { AssembleOptions, JavaAgentOptions, LaunchSpec } from './launch'

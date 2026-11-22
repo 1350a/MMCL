@@ -3,7 +3,7 @@
 > 这份文件是项目的"可迁移记忆"：技术栈、关键决策、任务清单、运行方式、迁移记录。
 > 新会话、新协作者、未来的我：**先读这份，再读 [DESIGN.md](./DESIGN.md) 的 3/7/8 节**，然后跑 `pnpm test` 确认基线。
 
-最后更新：2026-11-21（M3 外置登录代码完成）
+最后更新：2026-11-22（M4 代码完成：Fabric + Modrinth 最小接入 + 智能体操作）
 
 ---
 
@@ -16,7 +16,7 @@
 | 仓库位置 | `C:\Users\Mac\Project\mcl`（2026-11-18 从 DSH 工作区迁入） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
 | Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
-| 当前阶段 | **M3 桌面验收通过**（2026-11-22：外置登录全链路 + AI 对话实测可用；游戏控制台黑窗已修 windowsHide）→ 下一步 M4 智能体操作 + mod 加载器 |
+| 当前阶段 | **M4 桌面验收通过**（2026-11-22：AI 装 Sodium→启动 fabric-loader-0.20.1-1.20.1 全链路对话实锤；Fabric 安装与网络修复桌面端生效）→ 下一步 M5 扩展系统（QuickJS 沙箱） |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
 ---
@@ -125,7 +125,19 @@
 | M3 | 外置登录（authlib-injector 协议） | 登录/刷新/拉皮肤 |
 | M4 | 智能体操作（工具调用）+ mod 加载器 | AI 装 mod / 改配置 / 启动游戏 |
 | M5 | 扩展系统（QuickJS 沙箱） | AI 生成扩展并热加载 |
-| 后置 | 微软 OAuth、Modrinth/CurseForge、本地推理、Tauri 减重、代码签名 | — |
+| 后置 | 微软 OAuth、CurseForge、本地推理、Tauri 减重、代码签名 | — |
+
+> **M4 实现记录（2026-11-22，代码完成待桌面验收）**：
+> - **选型**（用户拍板）：mod 加载器 = **Fabric**（Apache-2.0 完全符合许可红线；meta v2 API 直接吐 profile JSON，无安装器实现成本；1.14+ 全版本支持）；mod 来源 = **Modrinth 最小接入**（把后置清单的一小片提前：搜索/版本/下载三端点，匿名可用；CurseForge 仍后置）。被拒：Forge（安装器 binarypatcher 实现成本高）、Quilt（生态小）、NeoForge（1.20.1+ 限定）。
+> - **协议核实**（落盘脚本逐字实测 2026-11-22）：fabric-meta `/v2/versions/loader/<game>`（loader 列表）与 `/v2/versions/loader/<game>/<loader>/profile/json`（启动器版本 JSON，`inheritsFrom` 指向原版、mainClass=KnotClient、库条目旧式 name+url，asm/mixin 自带 sha1/size 而 intermediary/fabric-loader 无哈希）；Modrinth `/v2/search`（**返回 `{total_hits, hits}` 对象**）、`/v2/project/<id>/version?game_versions=["x"]&loaders=["y"]`（primary 文件 + hashes.sha1）、cdn.modrinth.com 直下 200。
+> - **core 新模块**：`fabric.ts`（loader 列表 / profile 转换——有 sha1 转 `downloads.artifact` 校验下载、无哈希走旧式 url；原版前置检查；装完把**父版本 classifier jar 解压 natives 进 fabric 版本目录**）；`installed.ts`（`resolveInstalledVersion` 沿 inheritsFrom 逐级合并 + client jar 指向继承链根，防环深度上限 8）；`modrinth.ts`（searchMods facets / listModVersions / installModFile——sha1 校验、.part 续传，UA 标识遵守限流规范）；`mods.ts`（list/installLocalMod/removeMod，纯文件名校验防路径穿越）；`optionsTxt.ts`（`key:value` 首冒号切分，原位更新+追加）。
+> - **launch.ts**：`AssembleOptions.clientJarPath` 覆盖 client jar（继承版本用父原版 jar，缺省行为不变）。
+> - **launcher 编排**：`installFabricVersion`（复用安装锁/取消控制器/进度事件三件套）；mods 与 options 的 IPC 六 channel（`fabric:install`、`mod:list/remove/installLocal`、`config:getOptions/setOptions`），三处同步完成；`launchVersion` 改走 `resolveInstalledVersion`；UI 加「装 Fabric」按钮 + mods 卡片（列表/删除/本地 jar 安装）。
+> - **AI 工具扩到 10 个**：M2 的 `list_versions`/`read_crash_log` + M4 的 `launch_game`（缺省单版本自动选）/`install_fabric`（缺省最新稳定 loader）/`search_mods`/`install_mod`（project+gameVersion+loader 必填防装错版本）/`list_mods`/`remove_mod`/`read_config`/`write_config`。system prompt 给出装 mod 标准流程。
+> - 测试 **130/130**（core 121 + agent 9）。**会话内真网冒烟通过**：真清单装 1.16.5（skipAssets）→ Fabric 0.20.1（8 库 sha1 校验 + natives 解压）→ 继承链合并装配（classpath 末位=原版 jar、含 fabric-loader）→ Modrinth 搜索 sodium → 真下载主文件 sha1 校验 → options.txt 写读。
+> - **网络健壮性（2026-11-22 桌面验收首日修复）**：桌面 `fabric:install` 报 `UND_ERR_BODY_TIMEOUT`（undici 默认 bodyTimeout/headersTimeout 300s），本机实测 maven.fabricmc.net **直连超时/被劫持**、libraries.minecraft.net 返回脏内容（sha1 不符）；BMCLAPI maven（`bmclapi2.bangbang93.com/maven/`，302→中科大教育网镜像）秒级可用。三层修复：① `download.ts` 空闲看门狗（默认 30s 无数据流动即中止本次尝试按网络错误重试，.part 续传保留；自带 signal 与外部取消 signal 分离——沿用 M3 教训）② `install.ts` 下载任务多源回退（`libraryAltBaseUrls`，非末位源 retries=0 一次失败立即换源，末位源保留完整重试）③ fabric 原版安装与 launcher 版本安装均挂 `BMCLAPI_MAVEN_BASE` 回退；fabric/modrinth 的 meta/API fetch 换 `fetchJsonWithRetry`（单次 90s 总超时+重试 1 次，超时转可读中文）——此前 meta fetch 曾挂 414s。冒烟对比：全链路 626s→120s，meta 414s→2.1s，单库最坏等待 300s→30s。
+> - **SSRF 防护**：`assertSafeRemoteUrl`（download.ts 导出）校验外部响应携带的下载 URL（仅 http/https，拒绝 localhost/环回/私网/CGNAT/TEST-NET/组播/IPv4-mapped IPv6，注意 WHATWG URL 会把 `::ffff:127.0.0.1` 规范成 `::ffff:7f00:1`）；fabric profile 内嵌库 URL 以 meta 源同 host 为可信边界放行，modrinth `installModFile` 提供 `allowUrlHosts`（测试 fixture / 未来内网镜像口子）。
+> - **环境教训**：vitest fixture 服务器 afterAll 里 `await server.close()` 在本沙箱会挂满 60s hookTimeout（keep-alive 空闲连接；裸 node 下 2ms）——改为 `closeAllConnections(); close()` 不阻塞等待。
 
 ### 4.4 待办杂项
 
@@ -207,6 +219,9 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 | 2026-11-22 | **M2 收尾四项完成**（用户边验收边清账决策）：① AI 空闲超时（agent 包 `idleTimeoutMs` 默认 60s，无 SSE 增量喂狗即中止，报可读错误）② 会话历史截断（`maxHistoryMessages` 默认 20，发送视图 system+最近 N 条，本地会话保留全量）③ 下载取消（core signal 早已全链路透传，补 launcher 层 AbortController + `version:cancelInstall`/`java:cancelRuntimeInstall` IPC + UI 取消按钮，取消后 `.part` 保留续传）④ 主进程 aiSend 并发锁（多窗口/竞态防交叠）。测试 98/98（core 89 + agent 9），typecheck/build 全绿 |
 | 2026-11-22 | 二轮验收反馈修复：yggdrasil TimeoutError 定性——curl 实测演示站 auth-demo.yushi.moe 6 请求挂 3（校园网→Cloudflare 间歇丢包），服务端与协议层无错、程序问题是超时裸抛。修复：yggdrasil.ts 幂等 GET 自动重试 1 次（登录类 POST 不重试防副作用）+ describeNetworkFailure 中文可读错误（超时/连接拒绝/DNS/证书劫持）+ https 失败引导显式 http://（规范禁自动降级）。Java 187MB 下载慢与此同源。测试 core 92/92 |
 | 2026-11-22 | 三轮反馈修复真 bug：resolveApiRoot 把 15s 超时 signal 混入"外部取消"判定（combined.aborted）→ 超时被误判主动取消，**重试与错误包装全部失效**（日志实锤裸抛 TimeoutError）。修复 = 超时 signal 与外部 signal 分离（tryFetch 只收外部 signal，15s 由每次 fetchWithTimeout 自带）；"没有任何角色"报错加注册引导。真实链路验证：createRequire 脚本对演示站跑 ALI→元数据→authenticate 两遍全通。同日志确认：AI 401 = 用户 apiKey 过期（配置问题）、取消按钮工作正常。四轮：validate 改幂等重试 1 次 + 凭据链对齐规范（validate 未确认有效含网络失败 → 继续 refresh 续期，refresh 失败才要求重登）——此前 validate 超时会直接终止启动。测试 core 93/93 |
+| 2026-11-22 | **M4 代码完成**：core 新增 fabric.ts / installed.ts / modrinth.ts / mods.ts / optionsTxt.ts，launch.ts 加 clientJarPath 覆盖；launcher 加 Fabric/mods/options IPC 六 channel + UI 两卡 + AI 工具扩到 10 个。选型与协议依据见 §4.3 M4 实现记录。测试 130/130（core 121 + agent 9），typecheck/build 全绿，会话内真网冒烟（1.16.5+Fabric+Modrinth 下载）通过。待桌面验收：Fabric 版本启动进主菜单、AI 全流程对话 |
+| 2026-11-22 | **桌面验收首日网络修复**：fabric:install 挂死（UND_ERR_BODY_TIMEOUT）定性——maven.fabricmc.net 直连超时、libraries.minecraft.net 劫持脏内容（两者 sha1 实锤），BMCLAPI maven（302→中科大镜像）秒级可用。修复：下载空闲看门狗（30s 默认，替代 undici 300s 默认）、installVersion 多源回退（BMCLAPI_MAVEN_BASE，fabric 与 launcher 版本安装均挂）、meta/API fetch 超时+重试（fetchJsonWithRetry）、assertSafeRemoteUrl SSRF 校验。测试 139/139（core 130 + agent 9）。冒烟 626s→120s。待桌面复验 |
+| 2026-11-22 | **M4 桌面验收通过**：AI 全流程对话实锤——用户「帮我装 Sodium」→ AI list_versions 发现 1.20.1 已有 fabric-loader → **主动向用户确认目标版本**（system prompt 生效）→ search_mods → install_mod（Sodium 0.5.13+mc1.20.1）→ 提示「原版不加载模组，用 fabric-loader 版本启动」→ 启动成功、mods 落盘确认。Fabric 安装修复与 Java 17 runtime（M2 挂账项）均实际闭环。未覆盖：write_config 桌面对话未走到（不阻塞）。M4 收尾 commit，下一步 M5 扩展系统 |
 
 ---
 

@@ -320,3 +320,94 @@ describe('installVersion', () => {
     expect(fixture.counts.get('/client.jar')).toBe(1)
   })
 })
+
+describe('installVersion 多源回退（libraryAltBaseUrls）', () => {
+  const libPayload = Buffer.from('library-jar-content')
+  const libPath = 'g/a/1.0/a-1.0.jar'
+
+  function makeVersionJson(url: string): VersionJson {
+    return {
+      id: 'multi-1.0',
+      type: 'release',
+      mainClass: 'C',
+      libraries: [
+        {
+          name: 'g:a:1.0',
+          downloads: { artifact: { path: libPath, sha1: sha1(libPayload), size: libPayload.length, url } }
+        }
+      ]
+    }
+  }
+
+  async function makeRoot(): Promise<string> {
+    return fs.mkdtemp(join(tmpdir(), 'mcl-install-'))
+  }
+
+  it('主源 404 时立即回退备用源（非末位源不重试）', async () => {
+    const main = await startFixture({}) // /g/a/1.0/1.0.jar 404
+    servers.push(main.server)
+    const alt = await startFixture({ [`/${libPath}`]: libPayload })
+    servers.push(alt.server)
+
+    const root = await makeRoot()
+    await installVersion(makeVersionJson(`${main.baseUrl}/${libPath}`), root, {
+      os: { name: 'windows' },
+      libraryAltBaseUrls: [alt.baseUrl]
+    })
+    const dest = join(root, 'libraries', libPath)
+    expect(await fs.readFile(dest)).toEqual(libPayload)
+    expect(main.counts.get(`/${libPath}`)).toBe(1) // 主源只打了一次（retries=0 立即换源）
+    expect(alt.counts.get(`/${libPath}`)).toBe(1)
+  })
+
+  it('主源返回脏内容（sha1 不符）时回退备用源', async () => {
+    const main = await startFixture({ [`/${libPath}`]: Buffer.from('dirty-content') })
+    servers.push(main.server)
+    const alt = await startFixture({ [`/${libPath}`]: libPayload })
+    servers.push(alt.server)
+
+    const root = await makeRoot()
+    await installVersion(makeVersionJson(`${main.baseUrl}/${libPath}`), root, {
+      os: { name: 'windows' },
+      libraryAltBaseUrls: [alt.baseUrl]
+    })
+    expect(await fs.readFile(join(root, 'libraries', libPath))).toEqual(libPayload)
+  })
+
+  it('末位备用源保留完整重试（网络错误重试 2 次后成功）', async () => {
+    let mainRequests = 0
+    let altAttempts = 0
+    const main = createServer((req, res) => {
+      mainRequests++
+      res.writeHead(404)
+      res.end()
+    })
+    await new Promise<void>((resolve) => main.listen(0, '127.0.0.1', resolve))
+    servers.push(main)
+    const mainPort = (main.address() as AddressInfo).port
+
+    const alt = createServer((req, res) => {
+      altAttempts++
+      if (altAttempts <= 2) {
+        res.writeHead(200, { 'Content-Length': String(libPayload.length) })
+        res.write(libPayload.subarray(0, 8)) // 少于全长 → 停在半途
+        setTimeout(() => res.destroy(), 20) // 中途断开 → terminated
+        return
+      }
+      res.writeHead(200, { 'Content-Length': String(libPayload.length) })
+      res.end(libPayload)
+    })
+    await new Promise<void>((resolve) => alt.listen(0, '127.0.0.1', resolve))
+    servers.push(alt)
+    const altPort = (alt.address() as AddressInfo).port
+
+    const root = await makeRoot()
+    await installVersion(makeVersionJson(`http://127.0.0.1:${mainPort}/${libPath}`), root, {
+      os: { name: 'windows' },
+      libraryAltBaseUrls: [`http://127.0.0.1:${altPort}`]
+    })
+    expect(mainRequests).toBe(1) // 主源 404 一次即换源（非末位源 retries=0）
+    expect(altAttempts).toBe(3) // 末位源带完整重试
+    expect(await fs.readFile(join(root, 'libraries', libPath))).toEqual(libPayload)
+  })
+})

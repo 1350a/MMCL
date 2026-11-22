@@ -95,6 +95,16 @@ interface AiErrorPayload {
   message: string
 }
 
+interface ModFilePayload {
+  filename: string
+  sizeBytes: number
+}
+
+interface OptionEntry {
+  key: string
+  value: string
+}
+
 interface MclApi {
   ping: () => Promise<string>
   sha1: (filePath: string) => Promise<string>
@@ -122,6 +132,13 @@ interface MclApi {
   stopGame: () => Promise<void>
   readGameLog: () => Promise<string>
   isGameRunning: () => Promise<boolean>
+
+  installFabric: (gameVersion: string, loaderVersion?: string) => Promise<{ versionId: string }>
+  listMods: () => Promise<ModFilePayload[]>
+  removeMod: (filename: string) => Promise<void>
+  installModLocal: (jarPath: string) => Promise<string>
+  getOptions: () => Promise<OptionEntry[]>
+  setOptions: (entries: Record<string, string>) => Promise<OptionEntry[]>
 
   getAiConfig: () => Promise<AiConfigPayload>
   setAiConfig: (ai: { baseUrl: string; apiKey: string; model: string }) => Promise<AiConfigPayload>

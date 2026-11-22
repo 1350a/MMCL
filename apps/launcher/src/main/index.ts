@@ -98,6 +98,15 @@ function registerIpc(): void {
   ipcMain.handle('game:stop', () => service.stopGame())
   ipcMain.handle('game:readLog', () => service.readGameLog())
   ipcMain.handle('game:isRunning', () => service.isGameRunning())
+  // M4：Fabric 加载器 / mod 管理 / options.txt
+  ipcMain.handle('fabric:install', (_e, gameVersion: string, loaderVersion?: string) =>
+    service.installFabricVersion(gameVersion, loaderVersion)
+  )
+  ipcMain.handle('mod:list', () => service.listModsPayload())
+  ipcMain.handle('mod:remove', (_e, filename: string) => service.removeModFile(filename))
+  ipcMain.handle('mod:installLocal', (_e, jarPath: string) => service.installModFromLocal(jarPath))
+  ipcMain.handle('config:getOptions', () => service.readGameOptions())
+  ipcMain.handle('config:setOptions', (_e, entries: Record<string, string>) => service.writeGameOptions(entries))
 }
 
 app.whenReady().then(() => {

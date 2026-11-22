@@ -43,6 +43,11 @@ export interface AssembleOptions {
   extraJvmArgs?: string[]
   /** 用户附加游戏参数，放在最后。 */
   extraGameArgs?: string[]
+  /**
+   * client jar 路径覆盖（继承版本场景：fabric 等子版本自身无 jar，用父版本 client jar）。
+   * 缺省按 versions/<id>/<id>.jar 常规布局。
+   */
+  clientJarPath?: string
   /** authlib-injector 注入（外置登录时提供）。 */
   javaAgent?: JavaAgentOptions
   /** 覆盖平台检测（测试用）；version 缺省时 Windows 取 os.release()（如 10.0.19045）。 */
@@ -52,10 +57,10 @@ export interface AssembleOptions {
 }
 
 /** 由 rootDir 推断各默认路径（与 installVersion 的落盘布局一致）。 */
-function defaultPaths(versionJson: VersionJson, rootDir: string) {
+function defaultPaths(versionJson: VersionJson, rootDir: string, clientJarPath?: string) {
   const id = versionJson.id
   return {
-    clientJar: join(rootDir, 'versions', id, `${id}.jar`),
+    clientJar: clientJarPath ?? join(rootDir, 'versions', id, `${id}.jar`),
     nativesDir: join(rootDir, 'versions', id, 'natives'),
     librariesRoot: join(rootDir, 'libraries'),
     assetsRoot: join(rootDir, 'assets')
@@ -84,7 +89,7 @@ export function assembleLaunch(versionJson: VersionJson, options: AssembleOption
     features: options.features ?? {}
   }
 
-  const paths = defaultPaths(versionJson, options.rootDir)
+  const paths = defaultPaths(versionJson, options.rootDir, options.clientJarPath)
   const id = versionJson.id
 
   // classpath：rules 过滤后的 library jar（保持声明顺序）+ client jar

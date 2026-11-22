@@ -32,6 +32,9 @@ function App() {
   const [gameRunning, setGameRunning] = useState(false)
   const [gameLines, setGameLines] = useState<string[]>([])
   const [message, setMessage] = useState('')
+  // mods（M4）
+  const [mods, setMods] = useState<ModFilePayload[]>([])
+  const [modJarInput, setModJarInput] = useState('')
   // AI 面板
   const [aiConfig, setAiConfig] = useState<AiConfigPayload | null>(null)
   const [aiBase, setAiBase] = useState('')
@@ -45,6 +48,10 @@ function App() {
   const logRef = useRef<HTMLDivElement>(null)
   const aiChatRef = useRef<HTMLDivElement>(null)
 
+  const refreshMods = (): void => {
+    window.mcl.listMods().then(setMods)
+  }
+
   useEffect(() => {
     // 初始状态
     window.mcl.getAccount().then((a) => setAccount(a))
@@ -57,6 +64,7 @@ function App() {
     window.mcl.listInstalledVersions().then(setInstalled)
     window.mcl.listRuntimes().then(setRuntimes)
     window.mcl.isGameRunning().then(setGameRunning)
+    refreshMods()
     window.mcl.getAiConfig().then((c) => {
       setAiConfig(c)
       setAiBase(c.baseUrl)
@@ -98,6 +106,7 @@ function App() {
       }),
       window.mcl.onAiDone(() => {
         setAiStreaming('')
+        refreshMods() // AI 可能装/删了 mod，顺手刷新
       }),
       window.mcl.onAiError(({ message: err }) => {
         setAiStreaming('')
@@ -253,6 +262,32 @@ function App() {
       setMessage('')
     })
 
+  const onInstallFabric = () =>
+    run(async () => {
+      if (!selectedInstalled) return
+      setInstalling(true)
+      setInstallError('')
+      setProgress({ completed: 0, total: 0, file: '准备 Fabric…' })
+      await window.mcl.installFabric(selectedInstalled)
+      // 完成后经 event:install-done 刷新版本列表并选中新 fabric 版本
+    })
+
+  const onRemoveMod = (filename: string) =>
+    run(async () => {
+      await window.mcl.removeMod(filename)
+      refreshMods()
+      setMessage('')
+    })
+
+  const onInstallLocalMod = () =>
+    run(async () => {
+      if (!modJarInput.trim()) return
+      await window.mcl.installModLocal(modJarInput.trim())
+      setModJarInput('')
+      refreshMods()
+      setMessage('')
+    })
+
   const onInstallRuntime = () =>
     run(async () => {
       if (needJavaMajor === null) return
@@ -268,9 +303,9 @@ function App() {
 
   return (
     <div className="app">
-      <span className="badge">M1 · 能玩原版</span>
+      <span className="badge">M4 · 智能体操作 + Fabric</span>
       <h1>MCL</h1>
-      <p className="subtitle">AI 驱动的 Minecraft 启动器 · 离线/外置账户 + 版本安装 + 原版启动</p>
+      <p className="subtitle">AI 驱动的 Minecraft 启动器 · 离线/外置账户 + 版本/Fabric 安装 + AI 装 mod/改配置/启动</p>
 
       <section className="card">
         <h2>账户</h2>
@@ -450,6 +485,50 @@ function App() {
             {javaDl && <button onClick={onCancelRuntime}>取消</button>}
           </div>
         )}
+        <div className="row">
+          <button
+            onClick={onInstallFabric}
+            disabled={!selectedInstalled || installing || selectedInstalled.startsWith('fabric-loader-')}
+            title={
+              selectedInstalled.startsWith('fabric-loader-')
+                ? '该版本已是 Fabric 版本'
+                : '为选中的原版版本安装最新稳定版 Fabric 加载器'
+            }
+          >
+            装 Fabric
+          </button>
+          <span className="result" style={{ flex: 1 }}>
+            {selectedInstalled.startsWith('fabric-loader-')
+              ? '已选 Fabric 版本，可直接启动'
+              : '为原版版本装上 Fabric 后，就能在 mods 目录使用 mod'}
+          </span>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2>Mods（instances/main/mods）</h2>
+        <div className="row">
+          <input
+            value={modJarInput}
+            onChange={(e) => setModJarInput(e.target.value)}
+            placeholder="本地 mod jar 路径（也可让 AI 从 Modrinth 安装）"
+          />
+          <button onClick={onInstallLocalMod} disabled={!modJarInput.trim()}>
+            安装本地 mod
+          </button>
+        </div>
+        <div className="result">
+          {mods.length
+            ? mods.map((m) => (
+                <div key={m.filename} className="row">
+                  <span style={{ flex: 1 }}>
+                    {m.filename}（{(m.sizeBytes / 1024).toFixed(0)} KB）
+                  </span>
+                  <button onClick={() => onRemoveMod(m.filename)}>删除</button>
+                </div>
+              ))
+            : '（mods 目录为空——可以在 AI 助手里说「帮我装 XX mod」）'}
+        </div>
       </section>
 
       <section className="card">
@@ -461,7 +540,7 @@ function App() {
           <button onClick={onSaveAiConfig}>保存配置</button>
         </div>
         <div className="log ai-chat" ref={aiChatRef}>
-          {aiMessages.length === 0 && !aiStreaming ? '与 AI 助手对话（可让它列版本、分析崩溃日志）…' : (
+          {aiMessages.length === 0 && !aiStreaming ? '与 AI 助手对话（装 mod、改设置、启动游戏、分析崩溃日志）…' : (
             <>
               {aiMessages.map((m, i) => (
                 <div key={i} className={m.role === 'user' ? 'ai-user' : 'ai-assistant'}>

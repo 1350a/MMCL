@@ -37,6 +37,14 @@ const api = {
   readGameLog: () => ipcRenderer.invoke('game:readLog'),
   isGameRunning: () => ipcRenderer.invoke('game:isRunning'),
 
+  installFabric: (gameVersion: string, loaderVersion?: string) =>
+    ipcRenderer.invoke('fabric:install', gameVersion, loaderVersion),
+  listMods: () => ipcRenderer.invoke('mod:list'),
+  removeMod: (filename: string) => ipcRenderer.invoke('mod:remove', filename),
+  installModLocal: (jarPath: string) => ipcRenderer.invoke('mod:installLocal', jarPath),
+  getOptions: () => ipcRenderer.invoke('config:getOptions'),
+  setOptions: (entries: Record<string, string>) => ipcRenderer.invoke('config:setOptions', entries),
+
   getAiConfig: () => ipcRenderer.invoke('ai:getConfig'),
   setAiConfig: (ai: { baseUrl: string; apiKey: string; model: string }) => ipcRenderer.invoke('ai:setConfig', ai),
   aiSend: (text: string) => ipcRenderer.invoke('ai:send', text),

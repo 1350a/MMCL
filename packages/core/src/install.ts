@@ -13,9 +13,18 @@ const ASSETS_BASE_URL = 'https://resources.download.minecraft.net'
 /** 版本安装完成标记（写于 versions/<id>/ 下，供"已安装"列表过滤半成品）。 */
 const INSTALL_OK_MARKER = '.install-ok'
 
+/**
+ * 库文件备用 Maven 根（BMCLAPI）。主源（libraries.minecraft.net / maven.fabricmc.net）
+ * 在部分网络不可达或被劫持返回脏内容时回退（2026-11-22 桌面实测两者均中招）；
+ * BMCLAPI 实测 302 → cernet.mirrors.ustc.edu.cn（中科大教育网镜像），秒级可用。
+ */
+export const BMCLAPI_MAVEN_BASE = 'https://bmclapi2.bangbang93.com/maven/'
+
 /** 单个文件下载任务。 */
 interface DownloadTask {
   url: string
+  /** 备用下载源（主源失败后按序尝试，如 BMCLAPI maven 镜像）。 */
+  altUrls?: string[]
   dest: string
   sha1: string
   label: string
@@ -43,6 +52,8 @@ export interface InstallOptions {
   assetBaseUrl?: string
   /** 跳过 assets objects 下载（仅装 client/libraries/natives 的冒烟场景）。 */
   skipAssets?: boolean
+  /** library 的备用 Maven 根（主源失败后按序回退；如 BMCLAPI maven 镜像）。 */
+  libraryAltBaseUrls?: string[]
   onProgress?: (progress: InstallProgress) => void
   signal?: AbortSignal
 }
@@ -72,7 +83,18 @@ function nativesKey(osName: string): string {
   return `natives-${osName}`
 }
 
-/** 下载单个文件：已存在且校验通过则跳过，否则复用 downloadFile（.part 续传 + SHA1）。 */
+/** 单库在当前平台的 natives jar（Maven 布局相对路径）；该库无 natives 时返回 null。新式/旧式两种格式都认。 */
+export function nativesJarRelPath(lib: Library, osName: string): string | null {
+  const classifier = lib.downloads?.classifiers?.[nativesKey(osName)]
+  if (classifier?.path) return classifier.path
+  const cls = lib.natives?.[nativesKey(osName)]
+  return cls ? mavenPath(lib.name, cls) : null
+}
+
+/**
+ * 下载单个文件：已存在且校验通过则跳过；否则逐源尝试 downloadFile
+ * （非末位源 retries=0 一次失败立即换源，末位源带完整重试），复用 .part 续传 + SHA1。
+ */
 async function downloadTask(task: DownloadTask, signal?: AbortSignal): Promise<void> {
   if (task.fastSkip && task.sha1) {
     try {
@@ -90,7 +112,33 @@ async function downloadTask(task: DownloadTask, signal?: AbortSignal): Promise<v
       // 文件不存在或校验失败 → 重新下载
     }
   }
-  await downloadFile(task.url, task.dest, { checksum: task.sha1 || undefined, signal })
+  const urls = [task.url, ...(task.altUrls ?? [])]
+  let lastError: unknown = null
+  for (let i = 0; i < urls.length; i++) {
+    const isLastSource = i === urls.length - 1
+    try {
+      await downloadFile(urls[i], task.dest, {
+        checksum: task.sha1 || undefined,
+        signal,
+        ...(isLastSource ? {} : { retries: 0 })
+      })
+      return
+    } catch (err) {
+      lastError = err
+      if (signal?.aborted) throw err
+    }
+  }
+  const first = lastError instanceof Error ? lastError.message : String(lastError)
+  const hosts = urls
+    .map((u) => {
+      try {
+        return new URL(u).host
+      } catch {
+        return u
+      }
+    })
+    .join('、')
+  throw new Error(`${first}（已尝试 ${urls.length} 个下载源：${hosts}）`)
 }
 
 /** 固定并发数的任务池：一个失败后停止派发新任务，结束时聚合报错。 */
@@ -131,16 +179,19 @@ function libraryApplies(lib: Library, ctx: RuleContext): boolean {
   return evaluateRules(lib.rules, ctx)
 }
 
-/** 收集 library 的下载任务（artifact + 当前平台 natives classifier）。 */
-function collectLibraryTasks(lib: Library, ctx: RuleContext, rootDir: string): DownloadTask[] {
+/** 收集 library 的下载任务（artifact + 当前平台 natives classifier）；altBaseUrls 为备用 Maven 根。 */
+function collectLibraryTasks(lib: Library, ctx: RuleContext, rootDir: string, altBaseUrls: string[] = []): DownloadTask[] {
   const tasks: DownloadTask[] = []
+  const altUrls = (relPath: string): string[] =>
+    altBaseUrls.map((base) => new URL(relPath, base).toString())
   const artifact = lib.downloads?.artifact
   if (artifact?.path) {
     tasks.push({
       url: artifact.url,
       dest: join(rootDir, 'libraries', artifact.path),
       sha1: artifact.sha1,
-      label: basename(artifact.path)
+      label: basename(artifact.path),
+      altUrls: altUrls(artifact.path)
     })
   } else if (lib.url) {
     // 旧式 library：url + Maven 布局拼接
@@ -149,7 +200,8 @@ function collectLibraryTasks(lib: Library, ctx: RuleContext, rootDir: string): D
       url: new URL(path, lib.url).toString(),
       dest: join(rootDir, 'libraries', path),
       sha1: '', // 旧式无 sha1，由调用方置空跳过校验
-      label: basename(path)
+      label: basename(path),
+      altUrls: altUrls(path)
     })
   }
   const classifier = lib.downloads?.classifiers?.[nativesKey(ctx.os.name)]
@@ -158,7 +210,8 @@ function collectLibraryTasks(lib: Library, ctx: RuleContext, rootDir: string): D
       url: classifier.url,
       dest: join(rootDir, 'libraries', classifier.path),
       sha1: classifier.sha1,
-      label: basename(classifier.path)
+      label: basename(classifier.path),
+      altUrls: altUrls(classifier.path)
     })
   } else if (lib.natives) {
     // 旧式 natives：按平台取 classifier 拼 Maven 布局
@@ -215,9 +268,10 @@ export async function installVersion(
   }
 
   // libraries（rules 过滤）
+  const altBaseUrls = options.libraryAltBaseUrls ?? []
   const applied = versionJson.libraries.filter((lib) => libraryApplies(lib, ctx))
   for (const lib of applied) {
-    tasks.push(...collectLibraryTasks(lib, ctx, rootDir))
+    tasks.push(...collectLibraryTasks(lib, ctx, rootDir, altBaseUrls))
   }
 
   // assets index
