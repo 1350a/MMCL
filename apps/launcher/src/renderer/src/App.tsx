@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
+/** AI 工具活动行（干活过程可视化）。 */
+interface AiActivityEntry {
+  call: number
+  name: string
+  phase: 'args' | 'exec' | 'done'
+  /** args 阶段累积的原始参数 / exec 的完整参数 / done 的结果。 */
+  acc: string
+}
+
 function App() {
   // 账户
   const [account, setAccount] = useState<AccountPayload | null>(null)
@@ -44,6 +53,13 @@ function App() {
   const [aiStreaming, setAiStreaming] = useState('')
   const [aiBusy, setAiBusy] = useState(false)
   const [aiInput, setAiInput] = useState('')
+  // AI 干活过程（工具参数流式生成 → 执行 → 完成；按 call 槽位演进，新一轮追加不覆盖）
+  const [aiActivity, setAiActivity] = useState<AiActivityEntry[]>([])
+  // 扩展面板（M5-4）
+  const [panels, setPanels] = useState<PanelStatePayload[]>([])
+  // 扩展审核与管理（M5-5/6）
+  const [pendingExt, setPendingExt] = useState<PendingExtensionPayload | null>(null)
+  const [extensions, setExtensions] = useState<ExtensionSummaryPayload[]>([])
 
   const logRef = useRef<HTMLDivElement>(null)
   const aiChatRef = useRef<HTMLDivElement>(null)
@@ -70,6 +86,9 @@ function App() {
       setAiBase(c.baseUrl)
       setAiModel(c.model)
     })
+    window.mcl.listPanels().then(setPanels)
+    window.mcl.extPending().then(setPendingExt)
+    window.mcl.extList().then(setExtensions)
 
     const unsubs = [
       window.mcl.onInstallProgress((p) => setProgress(p)),
@@ -104,6 +123,32 @@ function App() {
       window.mcl.onAiDelta(({ text }) => {
         setAiStreaming((s) => s + text)
       }),
+      window.mcl.onAiTool((e) => {
+        setAiActivity((prev) => {
+          const next = [...prev]
+          // 同一 call 槽位按 args → exec → done 演进；槽位复用（新一轮）时追加新行
+          const findLast = (call: number, phase: AiActivityEntry['phase']): number => {
+            for (let i = next.length - 1; i >= 0; i--) if (next[i].call === call && next[i].phase === phase) return i
+            return -1
+          }
+          if (e.kind === 'args') {
+            const i = findLast(e.call, 'args')
+            const acc = (i >= 0 ? next[i].acc : '') + e.delta
+            const name = e.name || (i >= 0 ? next[i].name : '')
+            if (i >= 0) next[i] = { call: e.call, name, phase: 'args', acc }
+            else next.push({ call: e.call, name, phase: 'args', acc })
+          } else if (e.kind === 'exec') {
+            const i = findLast(e.call, 'args')
+            if (i >= 0) next[i] = { call: e.call, name: e.name, phase: 'exec', acc: e.args }
+            else next.push({ call: e.call, name: e.name, phase: 'exec', acc: e.args })
+          } else {
+            const i = findLast(e.call, 'exec')
+            if (i >= 0) next[i] = { call: e.call, name: e.name, phase: 'done', acc: e.result }
+            else next.push({ call: e.call, name: e.name, phase: 'done', acc: e.result })
+          }
+          return next
+        })
+      }),
       window.mcl.onAiDone(() => {
         setAiStreaming('')
         refreshMods() // AI 可能装/删了 mod，顺手刷新
@@ -112,7 +157,10 @@ function App() {
         setAiStreaming('')
         setAiMessages((msgs) => [...msgs, { role: 'assistant', text: `[错误] ${err}` }])
         setAiBusy(false)
-      })
+      }),
+      window.mcl.onPanelChanged((list) => setPanels(list)),
+      window.mcl.onExtPending((p) => setPendingExt(p)),
+      window.mcl.onExtListChanged((list) => setExtensions(list))
     ]
     return () => unsubs.forEach((u) => u())
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,7 +181,7 @@ function App() {
 
   useEffect(() => {
     aiChatRef.current?.scrollTo({ top: aiChatRef.current.scrollHeight })
-  }, [aiMessages, aiStreaming])
+  }, [aiMessages, aiStreaming, aiActivity])
 
   async function run(action: () => Promise<void>) {
     try {
@@ -233,6 +281,7 @@ function App() {
       setAiInput('')
       setAiMessages((msgs) => [...msgs, { role: 'user', text }])
       setAiStreaming('')
+      setAiActivity([]) // 新一轮提问：清掉上一轮的工具活动行
       setAiBusy(true)
       try {
         const { content } = await window.mcl.aiSend(text)
@@ -250,6 +299,7 @@ function App() {
       await window.mcl.aiClear()
       setAiMessages([])
       setAiStreaming('')
+      setAiActivity([])
       setMessage('')
     })
 
@@ -297,6 +347,24 @@ function App() {
       setNeedJavaMajor(null)
       window.mcl.listRuntimes().then(setRuntimes)
       setMessage(`Java ${needJavaMajor} 内置运行时已就绪，请再点一次启动`)
+    })
+
+  const onApproveExt = () =>
+    run(async () => {
+      await window.mcl.extApprove()
+      setMessage('')
+    })
+
+  const onRejectExt = () =>
+    run(async () => {
+      await window.mcl.extReject()
+      setMessage('')
+    })
+
+  const onRemoveExt = (id: string) =>
+    run(async () => {
+      await window.mcl.extRemove(id)
+      setMessage('')
     })
 
   const releases = remoteVersions.filter((v) => v.type === 'release')
@@ -540,11 +608,25 @@ function App() {
           <button onClick={onSaveAiConfig}>保存配置</button>
         </div>
         <div className="log ai-chat" ref={aiChatRef}>
-          {aiMessages.length === 0 && !aiStreaming ? '与 AI 助手对话（装 mod、改设置、启动游戏、分析崩溃日志）…' : (
+          {aiMessages.length === 0 && !aiStreaming && aiActivity.length === 0
+            ? '与 AI 助手对话（装 mod、改设置、启动游戏、写扩展、分析崩溃日志）…'
+            : (
             <>
               {aiMessages.map((m, i) => (
                 <div key={i} className={m.role === 'user' ? 'ai-user' : 'ai-assistant'}>
                   {m.role === 'user' ? '你' : 'AI'}：{m.text}
+                </div>
+              ))}
+              {aiActivity.map((a, i) => (
+                <div key={`act-${i}`} className="ai-activity">
+                  {a.phase === 'args' && (
+                    <>
+                      ⚙ {a.name || '工具'} 生成参数中：{a.acc.length > 160 ? '…' : ''}
+                      {a.acc.slice(-160)}
+                    </>
+                  )}
+                  {a.phase === 'exec' && <>⚙ 执行 {a.name}…</>}
+                  {a.phase === 'done' && <>✓ {a.name} 完成</>}
                 </div>
               ))}
               {aiStreaming && <div className="ai-assistant">AI：{aiStreaming}</div>}
@@ -565,6 +647,115 @@ function App() {
           <button onClick={onAiClear} disabled={aiBusy}>清空会话</button>
         </div>
       </section>
+
+      {pendingExt && (
+        <section className="card">
+          <h2>扩展审核（AI 提案）</h2>
+          <div className="result">
+            {pendingExt.manifest.id} · {pendingExt.manifest.name}
+            {pendingExt.manifest.version ? ` · v${pendingExt.manifest.version}` : ''}
+            {pendingExt.manifest.requires?.length ? ` · 依赖：${pendingExt.manifest.requires.join('、')}` : ''}
+          </div>
+          <div className="ext-chips">
+            {pendingExt.manifest.capabilities.map((c) => (
+              <span key={c} className={`chip${c === 'fs.instance' || c === 'net.domains' ? ' chip-warn' : ''}`}>
+                {c}
+              </span>
+            ))}
+          </div>
+          {(pendingExt.manifest.fsInstances?.length || pendingExt.manifest.netDomains?.length) && (
+            <div className="result">
+              {pendingExt.manifest.fsInstances?.length ? `fs 作用域：${pendingExt.manifest.fsInstances.join('、')}　` : ''}
+              {pendingExt.manifest.netDomains?.length ? `net 白名单：${pendingExt.manifest.netDomains.join('、')}` : ''}
+            </div>
+          )}
+          <div className="log ext-code">{pendingExt.code}</div>
+          <div className="row">
+            <button onClick={onApproveExt}>批准并装载</button>
+            <button onClick={onRejectExt}>拒绝</button>
+          </div>
+        </section>
+      )}
+
+      <section className="card">
+        <h2>扩展管理</h2>
+        {extensions.length ? (
+          extensions.map((e) => (
+            <div key={e.id} className="ext-row">
+              <div className="row">
+                <span style={{ flex: 1 }}>
+                  <b>{e.id}</b> · {e.name}
+                  {e.version ? ` · v${e.version}` : ''}（{e.state === 'active' ? '运行中' : '已停用'}）
+                </span>
+                <button onClick={() => onRemoveExt(e.id)}>移除</button>
+              </div>
+              <div className="ext-chips">
+                {e.capabilities.map((c) => (
+                  <span key={c} className={`chip${c === 'fs.instance' || c === 'net.domains' ? ' chip-warn' : ''}`}>
+                    {c}
+                  </span>
+                ))}
+              </div>
+              {(e.fsInstances?.length || e.netDomains?.length) && (
+                <div className="result">
+                  {e.fsInstances?.length ? `fs：${e.fsInstances.join('、')}　` : ''}
+                  {e.netDomains?.length ? `net：${e.netDomains.join('、')}` : ''}
+                </div>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="result">（无扩展——对 AI 说「帮我写一个扩展」来生成，批准后在这里管理）</div>
+        )}
+      </section>
+
+      {panels.length > 0 && (
+        <section className="card">
+          <h2>扩展面板</h2>
+          {panels.map((panel) => (
+            <div key={panel.id} className="ext-panel">
+              <h3>{panel.title}</h3>
+              {panel.items.map((item, i) => {
+                if (item.type === 'text') {
+                  return (
+                    <p key={i} className="ext-text">
+                      {item.content}
+                    </p>
+                  )
+                }
+                if (item.type === 'kv') {
+                  return (
+                    <div key={i} className="ext-kv">
+                      {Object.entries(item.rows ?? {}).map(([k, v]) => (
+                        <div key={k} className="ext-kv-row">
+                          <span>{k}</span>
+                          <b>{v}</b>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                }
+                if (item.type === 'button') {
+                  return (
+                    <button
+                      key={i}
+                      className="ext-btn"
+                      onClick={() =>
+                        run(async () => {
+                          await window.mcl.panelAction(panel.id, item.action ?? '')
+                        })
+                      }
+                    >
+                      {item.label}
+                    </button>
+                  )
+                }
+                return null
+              })}
+            </div>
+          ))}
+        </section>
+      )}
 
       {message && <div className="error">{message}</div>}
 

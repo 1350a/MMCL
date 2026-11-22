@@ -53,9 +53,17 @@ import type {
 } from '@mcl/core'
 import { ChatClient, ChatSession } from '@mcl/agent'
 import { ComponentHost } from '@mcl/host'
-import { createSandboxComponent, initExtRuntime } from '@mcl/ext-runtime'
+import type { PanelState } from '@mcl/host'
+import {
+  createCapabilityProviders,
+  ensureDemoExtension,
+  ExtensionPipeline,
+  EXTENSION_API_DOC,
+  initExtRuntime,
+  scanExtensions
+} from '@mcl/ext-runtime'
+import type { CapabilityRuntime, ExtensionSummary, PendingExtension, SubmitResult } from '@mcl/ext-runtime'
 import { createAiToolsComponent } from './components/aiTools'
-import { DEMO_EXTENSION_CODE } from './extensions/demoExtension'
 import type { AiToolsDeps } from './components/aiTools'
 
 export interface RemoteVersion {
@@ -110,26 +118,49 @@ export class LauncherService {
 
   /** 组件宿主（M5-1）：内建功能以组件形式注册，与扩展走同一能力授予面。 */
   private readonly components: ComponentHost
+  /** 能力面运行时（M5-4）：面板/钩子/fs 代理/net 代理的宿主实现。 */
+  private readonly capabilities: CapabilityRuntime
+  /** 扩展流水线（M5-5）：AI 提案 → 一致性检查 → 审核 → 热装载/卸载。 */
+  private readonly pipeline: ExtensionPipeline
 
   constructor(
     readonly rootDir: string,
     private readonly send: (channel: string, payload: unknown) => void
   ) {
     this.settingsPath = join(rootDir, 'settings.json')
-    this.components = new ComponentHost((info) =>
-      console.log(`[components] ${info.id} → ${info.state}${info.reason ? `（${info.reason}）` : ''}`)
-    )
+    this.capabilities = createCapabilityProviders({
+      send: this.send,
+      instanceDirFor: (id) => join(rootDir, 'instances', id)
+    })
+    this.components = new ComponentHost({
+      providers: this.capabilities.providers,
+      onChange: (info) => console.log(`[components] ${info.id} → ${info.state}${info.reason ? `（${info.reason}）` : ''}`)
+    })
+    this.pipeline = new ExtensionPipeline({
+      extensionsDir: join(rootDir, 'extensions'),
+      host: this.components,
+      notify: (channel, payload) => this.send(channel, payload)
+    })
     this.components.setCoEffect('game.notRunning', true)
     this.components.setCoEffect('ai.configured', this.isAiConfigured())
     this.components.register(createAiToolsComponent(this.aiToolsDeps()))
-    // M5-2：沙箱运行时预热 + 示例沙箱扩展（WASM 加载失败不阻塞启动器，仅少一个组件）
+    // M5-3：扩展装载管线（WASM 预热 → demo 落盘 → 扫描装载；失败不阻塞启动器，仅少扩展）
     void initExtRuntime()
-      .then(() =>
-        this.components.register(
-          createSandboxComponent({ id: 'sandbox.demo', name: '示例沙箱扩展', code: DEMO_EXTENSION_CODE })
-        )
-      )
-      .catch((err) => console.error('[components] 沙箱扩展加载失败：', err))
+      .then(async () => {
+        const extensionsDir = join(this.rootDir, 'extensions')
+        await ensureDemoExtension(extensionsDir)
+        const { loaded, errors } = await scanExtensions(extensionsDir)
+        for (const e of errors) console.error('[extensions]', e.dir, '→', e.reason)
+        // 逐个注册：单个扩展注册失败（如工具重名）不中止后续扩展
+        for (const ext of loaded) {
+          try {
+            this.components.register(ext.component)
+          } catch (err) {
+            console.error('[extensions] 注册失败', ext.manifest.id, '→', err)
+          }
+        }
+      })
+      .catch((err) => console.error('[components] 沙箱扩展装载失败：', err))
   }
 
   private readSettings(): SettingsFile {
@@ -460,6 +491,10 @@ export class LauncherService {
       clientJarPath: resolved.clientJarPath
     })
 
+    // M5-4：启动前钩子（按注册顺序执行；拒绝即抛、返回值按序追加 JVM 参数）
+    const extraJvmArgs = await this.capabilities.runBeforeLaunch({ versionId: id, jvmArgs: [] })
+    if (extraJvmArgs.length > 0) spec.jvmArgs.push(...extraJvmArgs)
+
     this.logBuffer = []
     const handle = launchGame(spec, {
       onLog: (line, source) => {
@@ -470,6 +505,9 @@ export class LauncherService {
       onExit: (code) => {
         this.game = null
         this.components.setCoEffect('game.notRunning', true)
+        void this.capabilities
+          .runAfterExit({ versionId: id, code })
+          .catch((err) => console.error('[hooks] 退出钩子执行失败：', err))
         this.send('event:game-exit', { code })
       },
       onError: (err) => this.send('event:game-log', { line: `进程错误: ${err.message}`, source: 'stderr' })
@@ -658,7 +696,8 @@ export class LauncherService {
       listModsPayload: () => this.listModsPayload(),
       removeModFile: (filename) => this.removeModFile(filename),
       readGameOptions: () => this.readGameOptions(),
-      writeGameOptions: (entries) => this.writeGameOptions(entries)
+      writeGameOptions: (entries) => this.writeGameOptions(entries),
+      submitExtensionProposal: (manifest, code) => this.pipeline.submit(manifest, code)
     }
   }
 
@@ -669,7 +708,9 @@ export class LauncherService {
       '用户环境为 Windows；游戏实例目录在启动器数据目录的 instances/main 下。',
       '装 mod 流程：确认原版已安装 → install_fabric 装 Fabric 加载器 → search_mods（带 gameVersion+loader）→ install_mod（project/gameVersion/loader 必填）→ 建议用户启动对应的 fabric-loader 版本（launch_game）。',
       '改游戏设置用 read_config / write_config（options.txt，游戏下次启动生效）；启动游戏用 launch_game。',
-      '对启动器或 mod 有不确定的版本兼容问题时，先向用户确认再操作。'
+      '对启动器或 mod 有不确定的版本兼容问题时，先向用户确认再操作。',
+      '用户请你写启动器扩展（自定义工具/面板/钩子等）时，用 generate_extension 提交，规范如下：',
+      EXTENSION_API_DOC
     ].join('\n')
   }
 
@@ -691,7 +732,9 @@ export class LauncherService {
       const client = new ChatClient({ baseUrl: ai.baseUrl, apiKey: ai.apiKey, model: ai.model })
       try {
         const result = await client.send(this.aiSession.messages(), this.components.getTools(), {
-          onDelta: (t) => this.send('event:ai-delta', { text: t })
+          onDelta: (t) => this.send('event:ai-delta', { text: t }),
+          // 工具活动（参数流式生成 / 执行 / 完成）推给渲染层：干活过程可视化
+          onToolEvent: (e) => this.send('event:ai-tool', e)
         })
         this.aiSession.addAssistant(result.content)
         return { content: result.content }
@@ -709,6 +752,48 @@ export class LauncherService {
 
   aiClear(): void {
     this.aiSession?.clear()
+  }
+
+  /** 扩展面板清单（渲染层初始拉取）。 */
+  listPanels(): PanelState[] {
+    return this.capabilities.getPanels()
+  }
+
+  /** 扩展面板按钮点击 → 面板 onAction 回调（桥回沙箱）。 */
+  panelAction(panelId: string, action: string): Promise<void> {
+    return this.capabilities.panelAction(panelId, action)
+  }
+
+  // ---- 扩展审核与管理（M5-5/6）：转发流水线 ----
+
+  /** AI 提交扩展提案（generate_extension 工具入口）。 */
+  submitExtensionProposal(manifest: unknown, code: string): Promise<SubmitResult> {
+    return this.pipeline.submit(manifest, code)
+  }
+
+  /** 当前待审核提案（渲染层初始拉取）。 */
+  extPending(): PendingExtension | null {
+    return this.pipeline.getPending()
+  }
+
+  /** 批准并热装载。 */
+  extApprove(): Promise<SubmitResult> {
+    return this.pipeline.approve()
+  }
+
+  /** 拒绝提案。 */
+  extReject(): SubmitResult {
+    return this.pipeline.reject()
+  }
+
+  /** 卸载扩展（注销 + 删目录）。 */
+  extRemove(id: string): Promise<SubmitResult> {
+    return this.pipeline.remove(id)
+  }
+
+  /** 已注册扩展清单（渲染层初始拉取）。 */
+  extList(): ExtensionSummary[] {
+    return this.pipeline.list()
   }
 }
 

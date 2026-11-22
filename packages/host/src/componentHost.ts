@@ -2,6 +2,7 @@ import type { AiTool } from '@mcl/agent'
 import type {
   AiToolsApi,
   CapabilityId,
+  CapabilityProviders,
   CoEffectExpr,
   ComponentChangeInfo,
   ComponentContext,
@@ -9,12 +10,9 @@ import type {
   ComponentManifest,
   HostComponent
 } from './types'
-import { isCoEffectExpr } from './types'
+import { CAPABILITY_IDS, isCoEffectExpr, isHostname, isInstanceId } from './types'
 
-/** 全部已实现能力的 id：词汇表之外的 manifest 直接拒绝注册。 */
-const CAPABILITIES: readonly CapabilityId[] = ['ai.tools']
-
-/** 注册表条目：组件 + 激活产物（回滚函数 / 已注册效应）。 */
+/** 注册表条目：组件 + 激活产物（回滚函数 / 已注册效应 / 能力授予回滚）。 */
 interface Entry {
   component: HostComponent
   state: 'active' | 'inactive'
@@ -22,21 +20,37 @@ interface Entry {
   disposer: (() => void) | null
   /** 该组件当前注册的 AI 工具（宿主记账，不依赖组件自觉注销）。 */
   tools: Map<string, AiTool>
+  /** 非内建能力的授予回滚（provider.revoke），宿主强制执行。 */
+  grantRevokes: Array<import('./types').CapabilityGrant<never>['revoke']>
+}
+
+export interface ComponentHostOptions {
+  /** 非内建能力的实现入口；未提供 provider 的能力在 register 即拒。 */
+  providers?: CapabilityProviders
+  /** 组件状态变化通知（激活/停用，停用带原因）。 */
+  onChange?: (info: ComponentChangeInfo) => void
 }
 
 /**
  * ComponentHost：组件生命周期宿主（DESIGN.md §5.3，Cordis 思想工程化）。
  * - manifest 声明能力面，宿主强制授予：上下文只含已声明且宿主已实现的能力 API；
  * - 协效应 requires 由宿主重评估：不满足即停用（回滚效应）并通知，恢复即重新激活；
- * - 卸载即回滚：activate 返回注销函数；即使组件回滚有遗漏，宿主也兜底清理其效应。
+ * - 卸载即回滚：activate 返回注销函数；即使组件回滚有遗漏，宿主也兜底清理其效应
+ *   （含 provider 授予的 revoke）。
  */
 export class ComponentHost {
   private readonly entries = new Map<string, Entry>()
   private readonly coEffects = new Map<string, boolean>()
   /** 工具名 → 组件 id 全局索引：跨组件重名注册在授权时即拒绝。 */
   private readonly toolOwners = new Map<string, string>()
+  private readonly providers?: CapabilityProviders
 
-  constructor(private readonly onChange?: (info: ComponentChangeInfo) => void) {}
+  constructor(options?: ComponentHostOptions) {
+    this.providers = options?.providers
+    this.onChange = options?.onChange
+  }
+
+  private onChange?: (info: ComponentChangeInfo) => void
 
   /** 注册组件：manifest 校验通过且依赖已满足时立即激活。 */
   register(component: HostComponent): void {
@@ -46,12 +60,35 @@ export class ComponentHost {
     }
     if (this.entries.has(manifest.id)) throw new Error(`组件 ${manifest.id} 已注册`)
     for (const cap of manifest.capabilities ?? []) {
-      if (!CAPABILITIES.includes(cap)) throw new Error(`组件 ${manifest.id} 声明了未知能力 ${String(cap)}`)
+      if (!CAPABILITY_IDS.includes(cap)) throw new Error(`组件 ${manifest.id} 声明了未知能力 ${String(cap)}`)
+      // ai.tools 为内建授予；其余能力必须有 provider，否则声明即拒（诚实边界）
+      if (cap !== 'ai.tools' && !this.providers?.[cap]) {
+        throw new Error(`组件 ${manifest.id} 声明了能力 ${cap}，但宿主未提供该能力的实现`)
+      }
     }
     for (const expr of manifest.requires ?? []) {
       if (!isCoEffectExpr(expr)) throw new Error(`组件 ${manifest.id} 声明了未知协效应 ${String(expr)}`)
     }
-    this.entries.set(manifest.id, { component, state: 'inactive', disposer: null, tools: new Map() })
+    // 能力作用域校验
+    if (manifest.capabilities.includes('fs.instance')) {
+      const ids = manifest.fsInstances
+      if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => isInstanceId(id))) {
+        throw new Error(`组件 ${manifest.id} 声明了 fs.instance，但 fsInstances 缺失或含非法实例 id`)
+      }
+    }
+    if (manifest.capabilities.includes('net.domains')) {
+      const domains = manifest.netDomains
+      if (!Array.isArray(domains) || domains.length === 0 || !domains.every((d) => isHostname(d))) {
+        throw new Error(`组件 ${manifest.id} 声明了 net.domains，但 netDomains 缺失或含非法主机名`)
+      }
+    }
+    this.entries.set(manifest.id, {
+      component,
+      state: 'inactive',
+      disposer: null,
+      tools: new Map(),
+      grantRevokes: []
+    })
     if (this.requirementsMet(manifest)) this.activate(manifest.id)
   }
 
@@ -131,12 +168,12 @@ export class ComponentHost {
       entry.disposer?.()
     } finally {
       // 宿主强制清理：即使组件回滚函数有遗漏，其效应也不残留
-      this.clearEffects(id)
+      this.clearEffects(id, reason)
     }
     this.notify({ id, state: 'inactive', reason })
   }
 
-  private clearEffects(id: string): void {
+  private clearEffects(id: string, reason?: 'co-effect' | 'unregistered'): void {
     const entry = this.entries.get(id)
     if (!entry) return
     entry.tools.clear()
@@ -144,14 +181,28 @@ export class ComponentHost {
       if (owner === id) this.toolOwners.delete(name)
     }
     entry.disposer = null
+    // provider 授予的能力效应由宿主强制回滚（面板撤板 / 钩子注销 / fs 补偿输出）
+    for (const revoke of entry.grantRevokes) revoke(reason)
+    entry.grantRevokes = []
   }
 
   /** 按 manifest 构建能力上下文：只注入声明且宿主已实现的能力。 */
   private buildContext(id: string): ComponentContext {
     const manifest = this.entries.get(id)!.component.manifest
     const capabilities: ComponentContext['capabilities'] = {}
-    if (manifest.capabilities.includes('ai.tools')) {
-      capabilities['ai.tools'] = this.grantAiTools(id)
+    for (const cap of manifest.capabilities) {
+      if (cap === 'ai.tools') {
+        capabilities['ai.tools'] = this.grantAiTools(id)
+        continue
+      }
+      const provider = this.providers?.[cap]
+      if (!provider) continue // register 已保证存在
+      const grant = provider(id, manifest)
+      this.entries.get(id)!.grantRevokes.push(grant.revoke)
+      if (cap === 'ui.panel') capabilities['ui.panel'] = grant.api as import('./types').UiPanelApi
+      if (cap === 'game.hooks') capabilities['game.hooks'] = grant.api as import('./types').GameHooksApi
+      if (cap === 'fs.instance') capabilities['fs.instance'] = grant.api as import('./types').FsInstanceApi
+      if (cap === 'net.domains') capabilities['net.domains'] = grant.api as import('./types').NetDomainsApi
     }
     return { componentId: id, capabilities }
   }
@@ -183,3 +234,5 @@ export class ComponentHost {
     this.onChange?.(info)
   }
 }
+
+export type { CapabilityId, CapabilityProviders }

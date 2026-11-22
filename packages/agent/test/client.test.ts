@@ -86,6 +86,33 @@ describe('ChatClient.send', () => {
     expect(toolMsg?.content).toContain('1.20.1')
   })
 
+  it('onToolEvent：参数流式增量 → 执行 → 完成（干活过程可视化）', async () => {
+    const first = sse([
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_9', function: { name: 'gen_tool', arguments: '{"pa' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'rts":1}' } }] } }] },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] }
+    ])
+    const second = sse([deltaContent('完成')])
+    const { baseUrl } = await startFixture([first, second])
+    const tools: AiTool[] = [
+      { name: 'gen_tool', description: '', parameters: { type: 'object' }, handler: async () => '{"ok":true}' }
+    ]
+
+    const client = new ChatClient({ baseUrl, apiKey: 'k', model: 'm' })
+    const events: Array<{ kind: string; call: number; name: string; text: string }> = []
+    const result = await client.send([{ role: 'user', content: '写一个工具' }], tools, {
+      onToolEvent: (e) => events.push({ kind: e.kind, call: e.call, name: e.name, text: e.kind === 'args' ? e.delta : e.kind === 'exec' ? e.args : e.result })
+    })
+
+    expect(result.content).toBe('完成')
+    expect(events).toEqual([
+      { kind: 'args', call: 0, name: 'gen_tool', text: '{"pa' },
+      { kind: 'args', call: 0, name: 'gen_tool', text: 'rts":1}' },
+      { kind: 'exec', call: 0, name: 'gen_tool', text: '{"parts":1}' },
+      { kind: 'done', call: 0, name: 'gen_tool', text: '{"ok":true}' }
+    ])
+  })
+
   it('未知工具 / handler 抛错都以字符串结果回传，不中断', async () => {
     const boom = sse([
       { choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'boom_tool', arguments: '{}' } }] } }] },

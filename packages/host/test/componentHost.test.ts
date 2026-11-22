@@ -68,7 +68,9 @@ describe('ComponentHost', () => {
   it('协效应不满足则保持停用；满足后激活；再丢失即停用并回滚', () => {
     const disposer = vi.fn()
     const changes: string[] = []
-    const host = new ComponentHost((info) => changes.push(`${info.id}:${info.state}:${info.reason ?? '-'}`))
+    const host = new ComponentHost({
+      onChange: (info) => changes.push(`${info.id}:${info.state}:${info.reason ?? '-'}`)
+    })
     host.register(
       makeComponent(
         { id: 'a', requires: ['ai.configured'], capabilities: ['ai.tools'], registerTools: ['t1'] },
@@ -165,7 +167,7 @@ describe('ComponentHost', () => {
 
   it('manifest 校验：未知能力 / 未知协效应 / 重复 id / 缺 id', () => {
     const host = new ComponentHost()
-    expect(() => host.register(makeComponent({ id: 'x', capabilities: ['ui.panel'] as never }))).toThrowError(/未知能力/)
+    expect(() => host.register(makeComponent({ id: 'x', capabilities: ['made.up'] as never }))).toThrowError(/未知能力/)
     expect(() => host.register(makeComponent({ id: 'x', requires: ['foo.bar'] }))).toThrowError(/未知协效应/)
     host.register(makeComponent({ id: 'x' }))
     expect(() => host.register(makeComponent({ id: 'x' }))).toThrowError(/已注册/)
@@ -192,5 +194,86 @@ describe('ComponentHost', () => {
     host.setCoEffect('ai.configured', false)
     expect(onActivate).toHaveBeenCalledTimes(1)
     expect(disposer).not.toHaveBeenCalled()
+  })
+})
+
+describe('ComponentHost（M5-4 CapabilityProviders）', () => {
+  const compWith = (id: string, capabilities: Array<'ui.panel' | 'game.hooks' | 'fs.instance' | 'net.domains'>, extra: Record<string, unknown> = {}): HostComponent => ({
+    manifest: {
+      id,
+      name: id,
+      capabilities: capabilities as never,
+      requires: [],
+      ...extra
+    },
+    activate: (ctx) => {
+      void ctx
+      return () => undefined
+    }
+  })
+
+  it('provider 授予：上下文含 provider API；revoke 随停用/卸载强制执行', () => {
+    const revokes: Array<{ id: string; reason?: string }> = []
+    const host = new ComponentHost({
+      providers: {
+        'ui.panel': (componentId) => ({
+          api: {
+            mountPanel: () => () => undefined
+          },
+          revoke: (reason) => revokes.push({ id: componentId, reason })
+        })
+      }
+    })
+    const seen: Array<Record<string, unknown>> = []
+    const comp = compWith('p1', ['ui.panel'])
+    comp.activate = (ctx) => {
+      seen.push({ granted: !!ctx.capabilities['ui.panel'] })
+      return () => undefined
+    }
+    host.register(comp)
+    expect(seen[0].granted).toBe(true)
+    host.setCoEffect('game.notRunning', false) // no-op，不触发
+    host.unregister('p1')
+    expect(revokes).toEqual([{ id: 'p1', reason: 'unregistered' }])
+  })
+
+  it('声明了无 provider 的能力 → register 拒绝；co-effect 停用也 revoke（带原因）', () => {
+    const host = new ComponentHost({})
+    expect(() => host.register(compWith('p2', ['fs.instance']))).toThrowError(/宿主未提供该能力的实现/)
+
+    const reasons: Array<string | undefined> = []
+    const host2 = new ComponentHost({
+      providers: {
+        'game.hooks': (componentId) => ({
+          api: { onBeforeLaunch: () => () => undefined, onAfterExit: () => () => undefined },
+          revoke: (reason) => reasons.push(reason)
+        })
+      }
+    })
+    host2.register(compWith('p3', ['game.hooks'], { requires: ['ai.configured'] }))
+    host2.setCoEffect('ai.configured', true)
+    host2.setCoEffect('ai.configured', false)
+    expect(reasons).toEqual(['co-effect'])
+  })
+
+  it('manifest 作用域校验：fs.instance 无 fsInstances 拒绝；net.domains 非法主机名拒绝', () => {
+    const host = new ComponentHost({
+      providers: {
+        'fs.instance': (id) => ({ api: new Proxy({} as never, {}), revoke: () => undefined }),
+        'net.domains': (id) => ({ api: new Proxy({} as never, {}), revoke: () => undefined })
+      }
+    })
+    expect(() => host.register(compWith('f1', ['fs.instance']))).toThrowError(/fsInstances 缺失或含非法实例 id/)
+    expect(() => host.register(compWith('f2', ['fs.instance'], { fsInstances: ['../evil'] }))).toThrowError(
+      /fsInstances 缺失或含非法实例 id/
+    )
+    expect(() =>
+      host.register(compWith('f3', ['fs.instance'], { fsInstances: ['main', 'skyblock'] }))
+    ).not.toThrow()
+    expect(() => host.register(compWith('n1', ['net.domains']))).toThrowError(/netDomains 缺失或含非法主机名/)
+    expect(() => host.register(compWith('n2', ['net.domains'], { netDomains: ['not a host'] }))).toThrowError(
+      /netDomains 缺失或含非法主机名/
+    )
+    expect(() => host.register(compWith('n3', ['net.domains'], { netDomains: ['api.example.com'] }))).not.toThrow()
   })
 })

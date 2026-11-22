@@ -198,6 +198,17 @@ select:focus {
   white-space: pre-wrap;
 }
 
+/* AI 干活过程行：工具参数流式生成 / 执行 / 完成 */
+.ai-activity {
+  color: #6b7688;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  margin-bottom: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .log {
   margin-top: 12px;
   height: 200px;
@@ -212,4 +223,64 @@ select:focus {
   color: #8f9bab;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* 扩展面板（M5-4） */
+.ext-panel {
+  border: 1px solid #2a2f3a;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+.ext-panel h3 {
+  margin: 4px 0 8px;
+  font-size: 13px;
+  color: #5eead4;
+}
+.ext-text {
+  margin: 4px 0;
+  font-size: 13px;
+}
+.ext-kv-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed #2a2f3a;
+}
+.ext-kv-row:last-child {
+  border-bottom: none;
+}
+.ext-btn {
+  margin: 6px 0;
+}
+
+/* 扩展审核/管理（M5-5/6） */
+.ext-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chip {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(94, 234, 212, 0.1);
+  color: #5eead4;
+  border: 1px solid rgba(94, 234, 212, 0.3);
+}
+.chip-warn {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.3);
+}
+.ext-code {
+  height: 220px;
+}
+.ext-row {
+  border: 1px solid #2a2f3a;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
 }

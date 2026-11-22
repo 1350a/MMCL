@@ -28,9 +28,20 @@ export interface ChatClientOptions {
   idleTimeoutMs?: number
 }
 
+/**
+ * 工具活动事件（干活过程可视化）：模型流式生成工具参数 → 参数收齐本地执行 → 执行完成。
+ * delta 里的 arguments 是逐块到达的，args 事件让 UI 能实时展示"模型正在写什么"。
+ */
+export type AiToolEvent =
+  | { kind: 'args'; call: number; name: string; delta: string }
+  | { kind: 'exec'; call: number; name: string; args: string }
+  | { kind: 'done'; call: number; name: string; result: string }
+
 export interface ChatCallbacks {
   /** 流式文本增量。 */
   onDelta?: (text: string) => void
+  /** 工具活动事件（UI 过程可视化）。 */
+  onToolEvent?: (event: AiToolEvent) => void
   /** 中断信号。 */
   signal?: AbortSignal
 }
@@ -165,7 +176,10 @@ export class ChatClient {
                 const acc = pendingCalls.get(call.index) ?? { id: '', name: '', args: '' }
                 if (call.id) acc.id = call.id
                 if (call.function?.name) acc.name += call.function.name
-                if (call.function?.arguments) acc.args += call.function.arguments
+                if (call.function?.arguments) {
+                  acc.args += call.function.arguments
+                  callbacks.onToolEvent?.({ kind: 'args', call: call.index, name: acc.name, delta: call.function.arguments })
+                }
                 pendingCalls.set(call.index, acc)
               }
             }
@@ -199,8 +213,9 @@ export class ChatClient {
           function: { name: c.name, arguments: c.args }
         }))
       })
-      for (const call of pendingCalls.values()) {
+      for (const [index, call] of [...pendingCalls.entries()]) {
         executed.push({ name: call.name, args: call.args })
+        callbacks.onToolEvent?.({ kind: 'exec', call: index, name: call.name, args: call.args })
         const tool = tools.find((t) => t.name === call.name)
         let result: string
         if (!tool) {
@@ -213,6 +228,7 @@ export class ChatClient {
             result = `tool error: ${(err as Error).message}`
           }
         }
+        callbacks.onToolEvent?.({ kind: 'done', call: index, name: call.name, result })
         working.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result })
       }
     }

@@ -19,10 +19,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",
     "@jitl/quickjs-wasmfile-release-sync": "^0.32.0",
+    "@mcl/core": "workspace:*",
+    "esbuild": "0.28.2",
     "quickjs-emscripten-core": "^0.32.0"
   },
   "devDependencies": {
+    "@jitl/quickjs-wasmfile-debug-asyncify": "^0.32.0",
     "@jitl/quickjs-wasmfile-debug-sync": "^0.32.0",
     "@mcl/agent": "workspace:*",
     "@mcl/host": "workspace:*",

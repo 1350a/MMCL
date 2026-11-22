@@ -50,6 +50,15 @@ const api = {
   aiSend: (text: string) => ipcRenderer.invoke('ai:send', text),
   aiClear: () => ipcRenderer.invoke('ai:clear'),
 
+  listPanels: () => ipcRenderer.invoke('ext:listPanels'),
+  panelAction: (panelId: string, action: string) => ipcRenderer.invoke('ext:panel-action', panelId, action),
+
+  extPending: () => ipcRenderer.invoke('ext:pending'),
+  extApprove: () => ipcRenderer.invoke('ext:approve'),
+  extReject: () => ipcRenderer.invoke('ext:reject'),
+  extList: () => ipcRenderer.invoke('ext:list'),
+  extRemove: (id: string) => ipcRenderer.invoke('ext:remove', id),
+
   onInstallProgress: on('event:install-progress'),
   onInstallDone: on('event:install-done'),
   onJavaInstallProgress: on('event:java-install-progress'),
@@ -57,8 +66,12 @@ const api = {
   onGameLog: on('event:game-log'),
   onGameExit: on('event:game-exit'),
   onAiDelta: on('event:ai-delta'),
+  onAiTool: on('event:ai-tool'),
   onAiDone: on('event:ai-done'),
-  onAiError: on('event:ai-error')
+  onAiError: on('event:ai-error'),
+  onPanelChanged: on('event:panel-changed'),
+  onExtPending: on('event:ext-pending'),
+  onExtListChanged: on('event:ext-list-changed')
 }
 
 contextBridge.exposeInMainWorld('mcl', api)

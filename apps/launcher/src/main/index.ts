@@ -95,6 +95,21 @@ function registerIpc(): void {
   ipcMain.handle('ai:setConfig', (_e, ai) => service.setAiConfig(ai))
   ipcMain.handle('ai:send', (_e, text: string) => service.aiSend(text))
   ipcMain.handle('ai:clear', () => service.aiClear())
+  // M5-4：扩展面板
+  ipcMain.handle('ext:listPanels', () => service.listPanels())
+  ipcMain.handle('ext:panel-action', (_e, panelId: string, action: string) => {
+    if (typeof panelId !== 'string' || typeof action !== 'string') throw new Error('invalid panel action params')
+    return service.panelAction(panelId, action)
+  })
+  // M5-5/6：扩展审核与管理（AI 提案 → 审核 → 热装载/卸载）
+  ipcMain.handle('ext:pending', () => service.extPending())
+  ipcMain.handle('ext:approve', () => service.extApprove())
+  ipcMain.handle('ext:reject', () => service.extReject())
+  ipcMain.handle('ext:list', () => service.extList())
+  ipcMain.handle('ext:remove', (_e, id: string) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('invalid extension id')
+    return service.extRemove(id)
+  })
   ipcMain.handle('game:stop', () => service.stopGame())
   ipcMain.handle('game:readLog', () => service.readGameLog())
   ipcMain.handle('game:isRunning', () => service.isGameRunning())

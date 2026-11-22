@@ -4,6 +4,7 @@ import { installModFile, listModVersions, searchMods } from '@mcl/core'
 import type { ModFileInfo, RuntimeInfo } from '@mcl/core'
 import type { AiTool } from '@mcl/agent'
 import type { HostComponent } from '@mcl/host'
+import type { SubmitResult } from '@mcl/ext-runtime'
 
 /** 内建 AI 工具组件对启动器状态的依赖（由 LauncherService 适配注入）。 */
 export interface AiToolsDeps {
@@ -20,6 +21,8 @@ export interface AiToolsDeps {
   removeModFile(filename: string): Promise<void>
   readGameOptions(): Promise<Array<{ key: string; value: string }>>
   writeGameOptions(entries: Record<string, string>): Promise<Array<{ key: string; value: string }>>
+  /** 提交扩展提案（M5-5：一致性检查 → 待审核槽，用户批准才装载）。 */
+  submitExtensionProposal(manifest: unknown, code: string): Promise<SubmitResult>
 }
 
 /**
@@ -245,6 +248,25 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
         }
         const options = await deps.writeGameOptions(entries)
         return JSON.stringify({ ok: true, options })
+      }
+    },
+    {
+      name: 'generate_extension',
+      description:
+        '提交一个启动器扩展提案（manifest + TypeScript 源码）。经静态一致性检查后进入人工审核卡，用户批准才装载生效；校验失败或被拒时错误信息会返回，修正后可重新提交。产出规范见系统提示的「扩展开发指南」。',
+      parameters: {
+        type: 'object',
+        properties: {
+          manifest: { type: 'object', description: '扩展 manifest 对象（id/name/version/capabilities 等）' },
+          code: { type: 'string', description: '扩展 TypeScript 源码（export function activate(ctx)）' }
+        },
+        required: ['manifest', 'code']
+      },
+      handler: async (args) => {
+        if (typeof args.manifest !== 'object' || args.manifest === null) throw new Error('manifest 需为对象')
+        if (typeof args.code !== 'string' || args.code.trim() === '') throw new Error('code 需为非空字符串')
+        const result = await deps.submitExtensionProposal(args.manifest, args.code)
+        return JSON.stringify(result)
       }
     }
   ]
