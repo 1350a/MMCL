@@ -60,6 +60,7 @@ MCL 是 **AI 驱动的 Minecraft Java 版第三方启动器**。与现有启动�
 ├──────────────────────────────────────────────────┤
 │ @mcl/core（纯 TS：下载/校验/账户/版本/启动）         │
 │ @mcl/agent（AI 层：协议适配/工具/会话，M2）          │
+│ @mcl/host（组件宿主：能力/协效应/回滚，M5）          │
 │ @mcl/ext-runtime（QuickJS 沙箱，M5）               │
 └──────────────────────────────────────────────────┘
 ```
@@ -120,6 +121,8 @@ interface AiTool {
 **沙箱运行时**：QuickJS（ADR-004，MIT；quickjs-emscripten WASM）在主进程内 + CPU 时间片限制；能力面收敛的依据是**沙箱内没有全局 fetch/fs，一切能力由宿主注入**。崩溃隔离的 utility process 留作演进。扩展语言 TS，经 esbuild（MIT）打包为 JS 装载。
 
 **AI 生成扩展流水线**：生成（扩展 API 文档进 system prompt）→ **静态一致性检查**（manifest 声明的能力 ≠ 实际请求的能力 → 拒绝装载；能力面是宿主注入的，该检查结构性成立）→ 人工审核 UI（能力清单 + 代码 diff，一次性授权）→ 热装载 → 移除回滚。
+
+**工作拆解**：M5-1 ComponentHost 核心模型 + AI 工具迁内建组件（**已完成 2026-11-22**，新包 `@mcl/host`，内建组件 `builtin.ai-tools`）→ M5-2 QuickJS 沙箱运行时 → M5-3 manifest + 装载器（esbuild 打包、装载/卸载）→ M5-4 能力面实现（ui.panel / game.hooks / fs.instance+net.domains）→ M5-5 AI 生成流水线 → M5-6 管理 UI。验收 = AI 生成扩展 → 审核 → 装载生效 → 卸载零残留。
 
 **边界（M5 明确不做）**：不做外部 MCP server 形态的扩展（全信任 Node 代码，破坏沙箱）——「MCP 桥」列为后置（高权限扩展接入现成 MCP 生态，需单独安全评估）；只做本地生命周期（生成/审核/装载/卸载/目录管理），**分发（zip 导入、registry、信任链）后置**——信任链没想清楚不开分发。
 

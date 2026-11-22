@@ -16,7 +16,7 @@
 | 仓库位置 | `C:\Users\Mac\Project\mcl`（2026-11-18 从 DSH 工作区迁入） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
 | Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
-| 当前阶段 | **M5 设计定稿**（2026-11-22：取 Cordis 思想工程化，六决策拍板 + 能力面词汇表 + 工作拆解 M5-1~6，见 DESIGN.md §5.3 + ADR-005）→ 待开工 M5-1（LauncherService 拆 ComponentHost）。备选插队：M4.5 发布准备（打包分发/多实例隔离） |
+| 当前阶段 | **M5-1 已完成（2026-11-22）**：新包 `@mcl/host` 落地 ComponentHost 核心模型（manifest 能力声明 + 宿主强制授予 + 协效应重评估 + 卸载回滚，12 单测）；`buildAiTools` 十工具迁为 `builtin.ai-tools` 内建组件（dogfooding 第一刀），`ai.configured` / `game.notRunning` 协效应接线，IPC/渲染层零改动。151 测试绿（core 130 + agent 9 + host 12）+ smoke 通过（日志见 `[components] builtin.ai-tools → active`）。下一步 M5-2（QuickJS 沙箱，设计拆解 M5-2~6 待补进 DESIGN.md §5.3）。备选插队：M4.5 发布准备（打包分发/多实例隔离） |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
 ---
@@ -223,6 +223,7 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 | 2026-11-22 | **桌面验收首日网络修复**：fabric:install 挂死（UND_ERR_BODY_TIMEOUT）定性——maven.fabricmc.net 直连超时、libraries.minecraft.net 劫持脏内容（两者 sha1 实锤），BMCLAPI maven（302→中科大镜像）秒级可用。修复：下载空闲看门狗（30s 默认，替代 undici 300s 默认）、installVersion 多源回退（BMCLAPI_MAVEN_BASE，fabric 与 launcher 版本安装均挂）、meta/API fetch 超时+重试（fetchJsonWithRetry）、assertSafeRemoteUrl SSRF 校验。测试 139/139（core 130 + agent 9）。冒烟 626s→120s。待桌面复验 |
 | 2026-11-22 | **M4 桌面验收通过**：AI 全流程对话实锤——用户「帮我装 Sodium」→ AI list_versions 发现 1.20.1 已有 fabric-loader → **主动向用户确认目标版本**（system prompt 生效）→ search_mods → install_mod（Sodium 0.5.13+mc1.20.1）→ 提示「原版不加载模组，用 fabric-loader 版本启动」→ 启动成功、mods 落盘确认。Fabric 安装修复与 Java 17 runtime（M2 挂账项）均实际闭环。未覆盖：write_config 桌面对话未走到（不阻塞）。M4 收尾 commit（`9a8a291`，22 文件 +2148），下一步 M5 扩展系统 |
 | 2026-11-22 | **M5 设计定稿（讨论拍板，未动工）**：读透 Cordis 论文（arXiv:2608.25512，DSH「一切皆插件」理论底座）后六决策拍板——①折中 dogfooding（ComponentHost 核心模型 + AI 工具注册/mods 卡片迁内建组件示范）②能力面 4 项（ai.tools / ui.panel / game.hooks / fs.instance+net.domains，注册类真回滚、I/O 类补偿记录）+ 协效应 3 项 ③QuickJS WASM 主进程 + 时间片（utility process 留演进）④AI 生成流水线（静态一致性检查 + 人工审核）⑤MCP 桥后置 ⑥分发后置。工作拆解 M5-1~M5-6，第一步 = LauncherService 拆 ComponentHost。详见 DESIGN.md §5.3 + ADR-005。MVP 盘点：文档定义的 M1-M3 零缺口；真实发布口径缺打包分发/多实例隔离（归入 M4.5 候选） |
+| 2026-11-22 | **M5-1 完成（ComponentHost 拆出 + 首个内建组件）**：新包 `packages/host`（`@mcl/host`，纯 TS 无 Electron 依赖，脚手架照 agent 模板）。核心模型：`ComponentManifest`（capabilities 词汇表 + requires 协效应）→ `register` 校验激活 / `setCoEffect` 重评估 / `unregister` 回滚；能力上下文只注入声明且宿主已实现的能力（未声明键不存在），组件回滚遗漏时宿主兜底清理其效应，跨组件工具重名注册即拒。dogfooding：LauncherService 的 `buildAiTools`（M2+M4 十工具）迁 `apps/launcher/src/main/components/aiTools.ts` 为 `builtin.ai-tools` 组件（requires `ai.configured`——AI 未配置时工具不注册），deps 适配器收敛私有状态为组件最小可见面；游戏启动/退出推 `game.notRunning`。IPC/preload/渲染层零改动。单测 12 个覆盖宿主强制/回滚/重评估/清理语义。测试 151 全绿，typecheck + electron-vite build + smoke 全过（smoke 日志 `builtin.ai-tools → active` 证实协效应端到端生效） |
 
 ---
 
