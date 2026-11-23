@@ -26,8 +26,8 @@ export function HomeCanvas({
   // 配置读取中
   if (aiDisabled === null) return <div className="home" />
 
-  // AI 已禁用：留白艺术（仅背景透出）+ 角落启用入口
-  if (aiDisabled && !ai.aiConfig?.configured) {
+  // AI 已禁用：留白艺术（仅背景透出）+ 角落启用入口（§2.1：禁用优先于「已配置」）
+  if (aiDisabled) {
     return (
       <div className="home home-blank">
         <button

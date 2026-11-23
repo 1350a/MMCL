@@ -192,21 +192,26 @@ interface UiPrefsPayload {
   aiDisabled?: boolean
 }
 
+/** 版本隔离策略（五档；每版本另有「跟随全局」）。 */
+type IsolationStrategyPayload = 'all' | 'none' | 'snapshotOnly' | 'modOnly' | 'snapshotAndMod'
+
 /** 全局配置（渲染层可见形态：AI key 只出掩码）。 */
 interface ConfigPayload {
   lastGameRoot?: string
   lastVersionId?: string
   javaPath?: string
   ai?: { baseUrl: string; model: string; apiKeyMasked: string }
+  isolationStrategy?: IsolationStrategyPayload
   updates?: 'auto' | 'notify' | 'notifyImportant' | 'off'
   autoCleanupVersions?: boolean
   downloadSource?: 'official' | 'bmclapi'
   ui?: UiPrefsPayload
 }
 
-/** 可修改的配置子集（javaPath 空串 = 清除手动路径）。 */
+/** 可修改的配置子集（javaPath 空串 = 清除手动路径；ui.backgroundPath 空串 = 清除自定义背景）。 */
 interface ConfigPatchPayload {
   javaPath?: string
+  isolationStrategy?: IsolationStrategyPayload
   updates?: 'auto' | 'notify' | 'notifyImportant' | 'off'
   autoCleanupVersions?: boolean
   downloadSource?: 'official' | 'bmclapi'
@@ -226,6 +231,21 @@ interface SplashProgressPayload {
 interface SetGameRootResultPayload {
   gameRoot: string
   requiresRestart: boolean
+}
+
+/** 自定义背景设置结果（C7：dataUrl 供渲染层立即生效，≤8MB）。 */
+interface BackgroundImagePayload {
+  backgroundPath: string
+  dataUrl: string
+}
+
+/** 全局隔离策略变更预览项（C7 确认弹窗①：有效隔离将翻转的「跟随全局」版本）。 */
+interface IsolationChangePayload {
+  id: string
+  name: string
+  versionId?: string
+  from: boolean
+  to: boolean
 }
 
 interface MclApi {
@@ -294,6 +314,11 @@ interface MclApi {
 
   pickDirectory: () => Promise<string | null>
   setGameRoot: (path: string) => Promise<SetGameRootResultPayload>
+
+  pickImage: () => Promise<BackgroundImagePayload | null>
+  getBackground: () => Promise<string | null>
+  previewIsolation: (strategy: IsolationStrategyPayload) => Promise<IsolationChangePayload[]>
+  getVersion: () => Promise<string>
 
   onSplashProgress: (callback: (payload: SplashProgressPayload) => void) => Unsubscribe
   onNotify: (callback: (payload: NotifyPayload) => void) => Unsubscribe

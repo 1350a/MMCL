@@ -3,9 +3,7 @@ import type { useMods } from '../../hooks/useMods'
 import type { useJava } from '../../hooks/useJava'
 import type { useInstances } from '../../hooks/useInstances'
 import type { useGameRoot } from '../../hooks/useGameRoot'
-
-/** 常用 LTS 运行时快速下载项（MC 生态主流：1.16- 多为 8，1.17~1.20.4 为 17，1.20.5+ 为 21）。 */
-const LTS_MAJORS = [8, 17, 21]
+import { JavaRuntimes } from '../JavaRuntimes'
 
 /**
  * 下载页（UI-DESIGN.md §2/§4/§7）：版本安装 / Mods 管理 / Java 运行时 / 游戏根。
@@ -24,8 +22,6 @@ export function DownloadPage({
   instances: ReturnType<typeof useInstances>
   gameRoot: ReturnType<typeof useGameRoot>
 }) {
-  const installedMajors = new Set(java.runtimes.map((r) => r.major))
-
   return (
     <div className="page">
       <section className="card">
@@ -127,43 +123,7 @@ export function DownloadPage({
       <section className="card">
         <h2>Java 运行时</h2>
         <div className="page-hint">内置运行时按需下载（不写系统环境变量）；手动指定 javaPath 在设置页配置</div>
-        {java.runtimes.map((r) => (
-          <div className="list-row" key={r.major}>
-            <span className="list-row-main mono">Java {r.major}</span>
-            <span className="page-ok">已就绪</span>
-          </div>
-        ))}
-        {LTS_MAJORS.filter((m) => !installedMajors.has(m)).map((major) => (
-          <div className="list-row" key={major}>
-            <span className="list-row-main mono">Java {major}</span>
-            <button
-              className="list-row-act"
-              onClick={() => java.installRuntimeMajor(major)}
-              disabled={java.javaDl !== null}
-            >
-              下载
-            </button>
-          </div>
-        ))}
-        {java.javaDl && (
-          <>
-            <div className="progress">
-              <div
-                className="progress-bar"
-                style={{
-                  width: `${java.javaDl.total ? (java.javaDl.completed / java.javaDl.total) * 100 : 5}%`
-                }}
-              />
-              <span className="progress-text">
-                {java.javaDl.phase === 'extract' ? '解压中…' : `${java.javaDl.completed}/${java.javaDl.total}`}{' '}
-                {java.javaDl.file}
-              </span>
-            </div>
-            <div className="page-actions">
-              <button onClick={java.onCancelRuntime}>取消</button>
-            </div>
-          </>
-        )}
+        <JavaRuntimes java={java} />
       </section>
 
       <section className="card">

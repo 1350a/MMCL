@@ -14,6 +14,7 @@ import { VersionSettingsDialog } from './components/dialogs/VersionSettingsDialo
 import { NewInstanceDialog } from './components/dialogs/NewInstanceDialog'
 import { PlaceholderPage } from './components/pages/PlaceholderPage'
 import { DownloadPage } from './components/pages/DownloadPage'
+import { SettingsPage } from './components/pages/SettingsPage'
 import { NavigationProvider, useNavigation } from './state/AppState'
 import { useAccounts } from './hooks/useAccounts'
 import { useAi } from './hooks/useAi'
@@ -45,7 +46,7 @@ function App() {
 
 /** 三大件装配（UI-DESIGN.md §1）：顶栏 + 侧栏 + 底栏 + 页面中心区。 */
 function LauncherShell() {
-  const { page, navigate, sidebarCollapsed, toggleSidebar } = useNavigation()
+  const { page, navigate, sidebarCollapsed, toggleSidebar, sidebarHidden, setSidebarHidden } = useNavigation()
   const { message, setMessage, run, needJavaMajor, setNeedJavaMajor } = useRunner()
   const accounts = useAccounts(run, setMessage)
   const java = useJava(run, setMessage, needJavaMajor, setNeedJavaMajor)
@@ -57,6 +58,12 @@ function LauncherShell() {
   const ext = useExtensions(run, setMessage)
   const tasks = useTasks()
   const gameRoot = useGameRoot(run, tasks.pushToast)
+
+  // 自定义背景（C7）：启动读一次 data URL，设置页选图/恢复即时更新
+  const [customBg, setCustomBg] = useState<string | null>(null)
+  useEffect(() => {
+    window.mcl.getBackground().then(setCustomBg)
+  }, [])
 
   const [loginOpen, setLoginOpen] = useState(false)
   const [versionSettingsFor, setVersionSettingsFor] = useState<InstanceMetaPayload | null>(null)
@@ -147,14 +154,20 @@ function LauncherShell() {
 
   return (
     <>
-      <div className="bg" aria-hidden="true" />
+      <div
+        className="bg"
+        aria-hidden="true"
+        style={customBg ? { backgroundImage: `url("${customBg}")` } : undefined}
+      />
       <div className="shell">
-        <SideBar
-          collapsed={sidebarCollapsed}
-          tasks={tasks.tasks}
-          recent={recentChats}
-          onPickRecent={(text) => ai.setAiInput(text)}
-        />
+        {!sidebarHidden && (
+          <SideBar
+            collapsed={sidebarCollapsed}
+            tasks={tasks.tasks}
+            recent={recentChats}
+            onPickRecent={(text) => ai.setAiInput(text)}
+          />
+        )}
         <div className="main-col">
           <TitleBar />
           <div className="page-area">
@@ -169,7 +182,16 @@ function LauncherShell() {
               />
             )}
             {page === 'extensions' && <PlaceholderPage title="插件" note="扩展审核与管理将在 C8 接入" />}
-            {page === 'settings' && <PlaceholderPage title="设置" note="外观 / 版本与隔离 / Java / 网络 / 通用将在 C7 接入" />}
+            {page === 'settings' && (
+              <SettingsPage
+                java={java}
+                ai={ai}
+                run={run}
+                backgroundActive={customBg !== null}
+                onBackgroundChanged={setCustomBg}
+                onConfirm={(req) => setConfirmState(req)}
+              />
+            )}
           </div>
           <BottomBar
             accounts={accounts}
@@ -185,9 +207,16 @@ function LauncherShell() {
         </div>
       </div>
 
-      {/* 收起态挂件按钮（顶栏下方左上角，§2.2） */}
-      {sidebarCollapsed && (
-        <button className="sidebar-restorer" onClick={toggleSidebar} title="展开侧栏（Ctrl+B）">
+      {/* 收起/隐藏态挂件按钮（顶栏下方左上角，§2.2）；隐藏态点击 = 取消隐藏 */}
+      {(sidebarCollapsed || sidebarHidden) && (
+        <button
+          className="sidebar-restorer"
+          onClick={() => {
+            if (sidebarHidden) setSidebarHidden(false)
+            else toggleSidebar()
+          }}
+          title={sidebarHidden ? '显示侧栏' : '展开侧栏（Ctrl+B）'}
+        >
           »
         </button>
       )}

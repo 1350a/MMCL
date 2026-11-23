@@ -98,4 +98,167 @@
     word-break: break-all;
     align-self: center;
   }
+
+  /* ===== 设置页（C7：左侧分组导航 + 右侧内容面板，§2.4） ===== */
+  .settings-page {
+    overflow: hidden; /* 内部面板独立滚动，导航固定 */
+  }
+
+  .settings {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 16px;
+  }
+
+  .settings-nav {
+    width: 128px;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding-top: 4px;
+  }
+
+  .settings-nav-item {
+    text-align: left;
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--mcl-text-secondary);
+    border-radius: var(--mcl-radius-md);
+    font-size: var(--mcl-font-base);
+    cursor: pointer;
+    transition: all var(--mcl-dur-fast) var(--mcl-ease-out);
+  }
+
+  .settings-nav-item:hover {
+    color: var(--mcl-text);
+    background: rgba(28, 38, 66, 0.06);
+  }
+
+  .settings-nav-active {
+    color: var(--mcl-text);
+    background: color-mix(in srgb, var(--mcl-primary) 18%, transparent);
+    border-color: color-mix(in srgb, var(--mcl-primary) 30%, transparent);
+  }
+
+  .settings-panel {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding-right: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: page-in var(--mcl-dur-base) var(--mcl-spring) both;
+  }
+
+  .settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .settings-field > label {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+  }
+
+  /* ui 层 input/select 的 flex:1 是给横向 .row 用的；纵向字段里应占满宽度不参与伸缩 */
+  .settings-field input,
+  .settings-field select {
+    flex: none;
+    width: 100%;
+  }
+
+  .settings-hint {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+    line-height: 1.6;
+  }
+
+  .settings-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--mcl-border);
+  }
+
+  .settings-toggle:last-child {
+    border-bottom: none;
+    padding-bottom: 2px;
+  }
+
+  .settings-toggle-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .settings-toggle-label {
+    font-size: var(--mcl-font-base);
+    color: var(--mcl-text);
+  }
+
+  .settings-toggle-sub {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+    margin-top: 2px;
+    line-height: 1.5;
+  }
+
+  .settings-toggle-act {
+    flex: none;
+    display: flex;
+    gap: 8px;
+  }
+
+  .settings-radio-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--mcl-font-base);
+    color: var(--mcl-text);
+    padding: 3px 0;
+    cursor: pointer;
+  }
+
+  .settings-disabled {
+    opacity: 0.55;
+  }
+
+  .settings-badge {
+    flex: none;
+    font-size: var(--mcl-font-xs);
+    padding: 1px 8px;
+    border-radius: var(--mcl-radius-pill);
+    background: color-mix(in srgb, var(--mcl-text-muted) 12%, transparent);
+    color: var(--mcl-text-muted);
+    border: 1px solid var(--mcl-border);
+  }
+
+  .settings-about {
+    font-size: var(--mcl-font-sm);
+    color: var(--mcl-text-secondary);
+    line-height: 1.9;
+  }
+
+  .settings-about-title {
+    font-weight: 600;
+    color: var(--mcl-text);
+  }
+
+  /* 全局 input 样式（ui 层，13px 文本框外观）不适用于勾选框/单选框 */
+  input[type='checkbox'],
+  input[type='radio'] {
+    flex: none;
+    width: auto;
+    margin: 0;
+    padding: 0;
+    accent-color: var(--mcl-primary);
+    cursor: pointer;
+  }
 }

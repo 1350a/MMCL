@@ -9,6 +9,9 @@ interface NavigationState {
   navigate: (page: Page) => void
   sidebarCollapsed: boolean
   toggleSidebar: () => void
+  /** 隐藏侧栏（设置页持久开关；隐藏 ≠ 收起，挂件按钮唤回）。 */
+  sidebarHidden: boolean
+  setSidebarHidden: (hidden: boolean) => void
 }
 
 const NavigationContext = createContext<NavigationState | null>(null)
@@ -16,18 +19,29 @@ const NavigationContext = createContext<NavigationState | null>(null)
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<Page>('home')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarHidden, setSidebarHiddenState] = useState(false)
 
-  // Ctrl+B 收起/展开侧栏（仅主页可收，UI-DESIGN.md §2.2）
+  // 隐藏态从全局配置恢复（ui.sidebarHidden）；切换即落盘
+  useEffect(() => {
+    window.mcl.getConfig().then((c) => setSidebarHiddenState(c.ui?.sidebarHidden ?? false))
+  }, [])
+
+  const setSidebarHidden = (hidden: boolean): void => {
+    setSidebarHiddenState(hidden)
+    void window.mcl.setConfig({ ui: { sidebarHidden: hidden } })
+  }
+
+  // Ctrl+B 收起/展开侧栏（仅主页可收，UI-DESIGN.md §2.2；隐藏态由设置页管理）
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault()
-        if (page === 'home') setSidebarCollapsed((c) => !c)
+        if (page === 'home' && !sidebarHidden) setSidebarCollapsed((c) => !c)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [page])
+  }, [page, sidebarHidden])
 
   return (
     <NavigationContext.Provider
@@ -36,8 +50,10 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
         navigate: setPage,
         sidebarCollapsed,
         toggleSidebar: () => {
-          if (page === 'home') setSidebarCollapsed((c) => !c)
-        }
+          if (page === 'home' && !sidebarHidden) setSidebarCollapsed((c) => !c)
+        },
+        sidebarHidden,
+        setSidebarHidden
       }}
     >
       {children}

@@ -1,5 +1,5 @@
 import { promises as fs, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { ChildProcess } from 'node:child_process'
 import {
@@ -30,6 +30,7 @@ import {
   installRuntime,
   installVersion,
   invalidate,
+  isIsolationStrategy,
   JavaVersionMismatchError,
   launchGame,
   listInstalledRuntimes,
@@ -47,6 +48,7 @@ import {
   resolveIsolation,
   saveAccounts,
   saveConfig,
+  strategyCovers,
   updateInstance,
   validate,
   validatePlayerName,
@@ -56,6 +58,7 @@ import type {
   Account,
   AuthenticateResponse,
   InstanceMeta,
+  IsolationFacts,
   IsolationStrategy,
   JavaAgentOptions,
   ModFileInfo,
@@ -86,6 +89,17 @@ import {
 import type { CapabilityRuntime, ExtensionSummary, PendingExtension, SubmitResult } from '@mcl/ext-runtime'
 import { createAiToolsComponent } from './components/aiTools'
 import type { AiToolsDeps } from './components/aiTools'
+
+/** 自定义背景：允许的格式与大小上限（data URL 走 IPC，过大会拖慢渲染）。 */
+const MAX_BACKGROUND_BYTES = 8 * 1024 * 1024
+const BACKGROUND_MIME: Record<string, string | undefined> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.bmp': 'image/bmp'
+}
 
 export interface RemoteVersion {
   id: string
@@ -134,6 +148,7 @@ export interface ConfigPayload {
   lastVersionId?: string
   javaPath?: string
   ai?: { baseUrl: string; model: string; apiKeyMasked: string }
+  isolationStrategy?: IsolationStrategy
   updates?: UpdateMode
   autoCleanupVersions?: boolean
   downloadSource?: 'official' | 'bmclapi'
@@ -144,10 +159,30 @@ export interface ConfigPayload {
 export interface ConfigPatchPayload {
   /** 空串 = 清除手动路径（回退自动探测）。 */
   javaPath?: string
+  /** 全局隔离策略（版本与隔离组；每版本覆盖仍在版本设置弹窗）。 */
+  isolationStrategy?: IsolationStrategy
   updates?: UpdateMode
   autoCleanupVersions?: boolean
   downloadSource?: 'official' | 'bmclapi'
+  /** ui.backgroundPath 传空串 = 清除自定义背景（删掉固定目录内的文件）。 */
   ui?: UiPrefs
+}
+
+/** 自定义背景设置结果（dataUrl 供渲染层立即生效，≤8MB）。 */
+export interface BackgroundImagePayload {
+  backgroundPath: string
+  dataUrl: string
+}
+
+/** 全局隔离策略变更预览项：跟随全局的版本其有效隔离将翻转。 */
+export interface IsolationChangePreview {
+  id: string
+  name: string
+  versionId?: string
+  /** 当前有效隔离（true=隔离）。 */
+  from: boolean
+  /** 新策略下有效隔离。 */
+  to: boolean
 }
 
 /** 右下角通知（UI-DESIGN.md §6）：动作按钮由渲染层按 id 分发。 */
@@ -318,6 +353,10 @@ export class LauncherService {
       if (patch.javaPath.trim() === '') delete this.config.javaPath
       else this.config.javaPath = patch.javaPath
     }
+    if (patch.isolationStrategy !== undefined) {
+      if (!isIsolationStrategy(patch.isolationStrategy)) throw new Error('invalid isolation strategy')
+      this.config.isolationStrategy = patch.isolationStrategy
+    }
     if (patch.updates !== undefined) {
       if (!['auto', 'notify', 'notifyImportant', 'off'].includes(patch.updates)) throw new Error('invalid updates mode')
       this.config.updates = patch.updates
@@ -336,6 +375,10 @@ export class LauncherService {
     }
     if (patch.ui !== undefined) {
       if (typeof patch.ui !== 'object' || patch.ui === null) throw new Error('invalid ui prefs')
+      // 清除自定义背景：删除固定目录内容（backgroundPath 空串 = 无自有背景）
+      if (patch.ui.backgroundPath === '') {
+        await fs.rm(this.backgroundDirPath, { recursive: true, force: true }).catch(() => undefined)
+      }
       this.config.ui = { ...this.config.ui, ...patch.ui }
     }
     await this.persistConfig()
@@ -369,6 +412,60 @@ export class LauncherService {
       }
     }
     return { gameRoot: root, requiresRestart: true }
+  }
+
+  // ---- 自定义背景（设置页外观组，C7）----
+
+  /** 自定义背景固定目录：.mmcl\background（渲染层不可指定任意路径，防越权读文件）。 */
+  private get backgroundDirPath(): string {
+    return join(this.dirs.mmclDir, 'background')
+  }
+
+  /**
+   * 设自定义背景：校验格式/大小（≤8MB）→ 复制入固定目录（同目录旧文件清掉）→
+   * 记忆 backgroundPath → 返回 data URL 供渲染层立即生效。
+   */
+  async setBackgroundImage(srcPath: string): Promise<BackgroundImagePayload> {
+    if (typeof srcPath !== 'string' || srcPath.length === 0) throw new Error('invalid background path')
+    const ext = extname(srcPath).toLowerCase()
+    if (!BACKGROUND_MIME[ext]) throw new Error('背景图格式不支持（PNG / JPG / WEBP / GIF / BMP）')
+    const stat = await fs.stat(srcPath)
+    if (!stat.isFile()) throw new Error('背景图必须是一个文件')
+    if (stat.size > MAX_BACKGROUND_BYTES) throw new Error('背景图不能超过 8MB，请压缩后再选')
+    await fs.mkdir(this.backgroundDirPath, { recursive: true })
+    for (const f of await fs.readdir(this.backgroundDirPath)) {
+      await fs.rm(join(this.backgroundDirPath, f), { force: true })
+    }
+    const dest = join(this.backgroundDirPath, `custom${ext}`)
+    await fs.copyFile(srcPath, dest)
+    this.config.ui = { ...this.config.ui, backgroundPath: dest }
+    await this.persistConfig()
+    return { backgroundPath: dest, dataUrl: await this.backgroundDataUrl(dest) }
+  }
+
+  /** 读取当前自定义背景（固定目录扫描；无则 null）。 */
+  async readBackground(): Promise<string | null> {
+    let files: string[]
+    try {
+      files = await fs.readdir(this.backgroundDirPath)
+    } catch {
+      return null
+    }
+    const file = files.find((f) => f.startsWith('custom.'))
+    if (!file) return null
+    try {
+      return await this.backgroundDataUrl(join(this.backgroundDirPath, file))
+    } catch (err) {
+      console.error('[mcl] 自定义背景读取失败：', err)
+      return null
+    }
+  }
+
+  private async backgroundDataUrl(filePath: string): Promise<string> {
+    const mime = BACKGROUND_MIME[extname(filePath).toLowerCase()] ?? 'image/png'
+    const buf = await fs.readFile(filePath)
+    if (buf.byteLength > MAX_BACKGROUND_BYTES) throw new Error('背景图不能超过 8MB，请压缩后再选')
+    return `data:${mime};base64,${buf.toString('base64')}`
   }
 
   async getAccount(): Promise<Account | null> {
@@ -691,8 +788,8 @@ export class LauncherService {
     return typeof versionId === 'string' && versionId.includes('fabric-loader')
   }
 
-  /** 有效隔离判定（§3）：每版本覆盖 → 全局策略；清单不可达按 release 处理。 */
-  private async effectiveIsolation(instance: InstanceMeta): Promise<boolean> {
+  /** 隔离判定材料（§3）：版本类型（清单快照）+ 是否加载器版本；清单不可达按 release 处理。 */
+  private async isolationFacts(instance: InstanceMeta): Promise<IsolationFacts> {
     let isSnapshot = false
     if (instance.versionId) {
       try {
@@ -702,12 +799,36 @@ export class LauncherService {
         // 清单不可达：按 release 处理（mod 版仍按加载器判定）
       }
     }
+    return { isSnapshot, isMod: LauncherService.isModVersion(instance.versionId) }
+  }
+
+  /** 有效隔离判定（§3）：每版本覆盖 → 全局策略。 */
+  private async effectiveIsolation(instance: InstanceMeta): Promise<boolean> {
     return resolveIsolation({
       perVersion: instance.isolation,
       globalStrategy: this.config.isolationStrategy ?? 'all',
-      isSnapshot,
-      isMod: LauncherService.isModVersion(instance.versionId)
+      ...(await this.isolationFacts(instance))
     })
+  }
+
+  /**
+   * 全局隔离策略变更预览（C7 确认弹窗①）：对全部「跟随全局」版本算有效隔离翻转。
+   * 明确指定每版本策略的条目不受全局影响，不进清单。
+   */
+  async previewGlobalIsolationChange(next: IsolationStrategy): Promise<IsolationChangePreview[]> {
+    if (!isIsolationStrategy(next)) throw new Error('invalid isolation strategy')
+    await this.instanceReady
+    const current = this.config.isolationStrategy ?? 'all'
+    const instances = await listInstances(this.dirs.gameRoot)
+    const affected: IsolationChangePreview[] = []
+    for (const inst of instances) {
+      if (inst.isolation && inst.isolation !== 'follow') continue
+      const facts = await this.isolationFacts(inst)
+      const from = strategyCovers(current, facts)
+      const to = strategyCovers(next, facts)
+      if (from !== to) affected.push({ id: inst.id, name: inst.name, versionId: inst.versionId, from, to })
+    }
+    return affected
   }
 
   /** 实例数据目录（mods/options/saves 跟随有效隔离）：开=版本文件夹，关=游戏根。 */

@@ -260,6 +260,24 @@ function registerIpc(service: LauncherService): void {
     if (typeof path !== 'string' || path.length === 0) throw new Error('invalid game root path')
     return service.setGameRoot(path, app.getPath('userData'))
   })
+
+  // UI 重构 C7：设置页——自定义背景（系统文件对话框 + 固定目录 data URL）/ 隔离策略预览 / 版本号
+  ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('dialog:pick-image', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const options: OpenDialogOptions = {
+      title: '选择背景图片',
+      properties: ['openFile'],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }]
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return service.setBackgroundImage(result.filePaths[0])
+  })
+  ipcMain.handle('background:get', () => service.readBackground())
+  ipcMain.handle('isolation:preview', (_e, strategy: string) =>
+    service.previewGlobalIsolationChange(strategy as IsolationStrategy)
+  )
 }
 
 app.whenReady()

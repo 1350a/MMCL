@@ -17,10 +17,11 @@ const api = {
   getConfig: () => ipcRenderer.invoke('config:get'),
   setConfig: (patch: {
     javaPath?: string
+    isolationStrategy?: 'all' | 'none' | 'snapshotOnly' | 'modOnly' | 'snapshotAndMod'
     updates?: 'auto' | 'notify' | 'notifyImportant' | 'off'
     autoCleanupVersions?: boolean
     downloadSource?: 'official' | 'bmclapi'
-    ui?: { sidebarHidden?: boolean; backgroundPath?: string }
+    ui?: { sidebarHidden?: boolean; backgroundPath?: string; aiDisabled?: boolean }
   }) => ipcRenderer.invoke('config:set', patch),
   getAccount: () => ipcRenderer.invoke('account:get'),
   saveAccount: (name: string) => ipcRenderer.invoke('account:save', name),
@@ -85,6 +86,12 @@ const api = {
   // UI 重构 C6：系统原生目录选择 + 游戏根切换（重启生效）
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-directory'),
   setGameRoot: (path: string) => ipcRenderer.invoke('gameRoot:set', path),
+
+  // UI 重构 C7：设置页（自定义背景 data URL / 隔离策略变更预览 / 应用版本号）
+  pickImage: () => ipcRenderer.invoke('dialog:pick-image'),
+  getBackground: () => ipcRenderer.invoke('background:get'),
+  previewIsolation: (strategy: string) => ipcRenderer.invoke('isolation:preview', strategy),
+  getVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
 
   // UI 重构 C4：splash 管线（进度推送 + 错误面板交互）
   splashRetry: () => ipcRenderer.invoke('splash:retry'),
