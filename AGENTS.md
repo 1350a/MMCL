@@ -8,7 +8,7 @@
 
 AI 驱动的 Minecraft Java 版**第三方启动器**（Electron 桌面应用）。非 Mojang 官方产品，ISC 许可。
 
-当前阶段：**M0 已完成**（脚手架 + 核心库下载/校验 + 单测 + 构建全绿），M1（能玩原版）未开始。
+当前阶段：**M1~M6 已完成并验收**（原版启动 / Java 运行时 / AI 助手 / 外置登录 / Fabric+Modrinth / 扩展系统 / 多实例）；**UI 重构 C1~C7 已提交验收**（三大件 + 主页 / 下载页 / 设置页全部接入，260 测试绿），下一步 C8 插件页 → C9 收尾（设计见 `docs/UI-DESIGN.md`）。
 
 ## 2. 技术栈速查
 
@@ -32,8 +32,11 @@ TypeScript 5.6（strict，全栈同一种语言）· Node ≥ 20 · pnpm workspa
 
 ```
 apps/launcher/       Electron 壳：src/main（主进程）+ src/preload + src/renderer（React）
-packages/core/       纯 TS 库：下载（.part 续传 + SHA1 校验）、哈希、错误类型
-docs/                CONTEXT.md（交接）/ DESIGN.md（设计）
+packages/core/       纯 TS 库：下载 / 安装 / 启动装配 / 账户 / config / 隔离语义等业务逻辑
+packages/agent/      AI 客户端（OpenAI 兼容 chat + function calling，禁 electron/react）
+packages/host/       组件宿主（能力面/协效应，一切皆插件底座）
+packages/ext-runtime/ QuickJS 沙箱 + 扩展装载/审核流水线
+docs/                CONTEXT.md（交接）/ DESIGN.md（设计）/ UI-DESIGN.md（UI 交互）
 ```
 
 1. **`packages/core` 禁止 import `electron` 或 `react`** —— 它必须能在纯 Node + Vitest 下运行，未来可被 CLI 或别的壳复用。
@@ -57,9 +60,9 @@ docs/                CONTEXT.md（交接）/ DESIGN.md（设计）
 - pnpm 的构建脚本白名单键是 `allowBuilds`，写在 `pnpm-workspace.yaml`（package.json 的 `pnpm` 字段已被忽略）。
 - **Chromium 沙箱启动即崩（2026-11-19 已修复）**：曾经 `pnpm dev` / `pnpm smoke` 启动即退（退出码 `-2147483645` = `0x80000003`），只有 `--no-sandbox` 能出窗。根因是 pnpm 首次安装的 Electron `dist` 与官方发布包不一致；换成干净官方 `dist` 后已恢复，**日常不需要 `--no-sandbox`**。复发时按 `docs/INCIDENT-2026-11-19-electron-sandbox.md` 第 7 节 SOP 处置，别先怀疑业务代码。逃生舱 `pnpm dev:ns` / `pnpm smoke:ns` 仅作对照实验。
 
-## 7. 下一步（M1，按顺序）
+## 7. 下一步（UI 重构收尾，按顺序）
 
-离线账户（`uuid v3(MD5)` of `OfflinePlayer:<name>`）→ 版本元数据（version_manifest）→ 资源下载（libraries / natives / client jar / assets）→ 启动装配（classpath、JVM 参数、cwd 隔离）→ 启动与日志落盘 → UI 最小闭环。详见 CONTEXT.md §4.2。
+C8 插件页（`ext:*` 五通道 + 审核/管理 UI 从旧卡迁入页面）→ C9 收尾（孤儿旧卡片 VersionsCard/ModsCard/JavaCard/AccountsCard/AiCard/InstancesCard/Ext*Card 清理、CONTEXT/DESIGN 收口）。之后候选：M4.5 发布准备（electron-builder 打包；asar 需换 quickjs singlefile 变体）。详见 CONTEXT.md §1 与 `docs/UI-DESIGN.md` §8。
 
 ## 8. 不要做的事
 

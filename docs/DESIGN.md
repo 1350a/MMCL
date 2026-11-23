@@ -200,7 +200,11 @@ electron（MIT）、electron-vite（MIT）、vite（MIT）、react（MIT）、ty
 | M3 | 外置登录 | Authlib-Injector 协议可登录/刷新/拉皮肤 |
 | M4 | 智能体操作 + mod 加载器 | AI 装 mod / 改配置 / 启动游戏 |
 | M5 | 扩展系统 | QuickJS 沙箱 + AI 生成扩展热加载 |
+| M6 | 多实例隔离（2026-11-22） | 实例 = 独立 gameDir，mods/存档不混装 |
+| UI 重构 | 三大件 + 主页 / 下载页 / 设置页（C1~C7，2026-11-23；见 [UI-DESIGN.md](./UI-DESIGN.md)） | 每笔桌面验收 |
 | 后置 | 微软 OAuth、Modrinth/CurseForge、本地推理、Tauri 减重、代码签名 | — |
+
+> 完成情况（2026-11-23）：M0~M6 全部完成并验收；UI 重构 C1~C7 已提交验收（C8 插件页 / C9 收尾待做）；M4.5 打包分发未排期（用户明确不急）。
 
 ## 8. 决策记录
 
