@@ -1,0 +1,36 @@
+/*
+ * 全局样式组织：reset 落最低层，后续 layout/pages/dialogs 各占一层，
+ * 层间优先级按声明顺序（后声明者胜），未分层规则一律高于所有层。
+ */
+@layer reset, ui, layout, pages, dialogs;
+
+@layer reset {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    background: #05070d; /* 背景图（80% 不透明度）之下的暗色基底 */
+    color: var(--mcl-text);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* 动效降级：用户偏好减少动态时全部瞬时化 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

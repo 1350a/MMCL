@@ -1,0 +1,63 @@
+/*
+ * 设计令牌（UI-DESIGN.md §8）。
+ * 色板锚定默认背景图（暗夜 MC 场景）：深蓝黑基底 + 靛蓝主色（非纯蓝）+
+ * 琥珀强调（火把）+ AI 紫 + 草绿成功，多色系。
+ */
+:root {
+  /* 主色与功能色 */
+  --mcl-primary: hsl(222 78% 62%); /* 靛蓝，略偏紫 */
+  --mcl-cyan: hsl(190 75% 52%); /* 渐变搭档 */
+  --mcl-accent: hsl(36 90% 60%); /* 琥珀（火把） */
+  --mcl-ai: hsl(262 70% 64%); /* AI 紫 */
+  --mcl-success: hsl(105 55% 55%);
+  --mcl-warning: hsl(38 92% 55%);
+  --mcl-danger: hsl(354 75% 60%);
+
+  /* 渐变语言：主操作 indigo→cyan；AI 元素 violet→indigo；启动按钮 amber→orange（C5 接线） */
+  --mcl-gradient-primary: linear-gradient(135deg, var(--mcl-primary), var(--mcl-cyan));
+  --mcl-gradient-ai: linear-gradient(135deg, var(--mcl-ai), var(--mcl-primary));
+  --mcl-gradient-launch: linear-gradient(135deg, var(--mcl-accent), hsl(24 92% 58%));
+
+  /* 表面：深色玻璃（侧栏另用更深一档，见 layout 批） */
+  --mcl-glass: rgba(13, 18, 32, 0.62);
+  --mcl-glass-deep: rgba(8, 11, 20, 0.72);
+  --mcl-glass-sidebar: rgba(10, 14, 26, 0.66);
+  --mcl-border: rgba(120, 150, 220, 0.14);
+  --mcl-border-strong: rgba(120, 150, 220, 0.26);
+  --mcl-blur: 14px;
+
+  /* 文字三级 */
+  --mcl-text: hsl(220 30% 92%);
+  --mcl-text-secondary: hsl(220 18% 68%);
+  --mcl-text-muted: hsl(220 14% 48%);
+
+  /* 间距 */
+  --mcl-space-1: 4px;
+  --mcl-space-2: 8px;
+  --mcl-space-3: 12px;
+  --mcl-space-4: 16px;
+  --mcl-space-5: 20px;
+  --mcl-space-6: 24px;
+  --mcl-space-8: 32px;
+  --mcl-space-12: 48px;
+
+  /* 圆角 */
+  --mcl-radius-sm: 6px;
+  --mcl-radius-md: 8px;
+  --mcl-radius-lg: 12px;
+  --mcl-radius-pill: 999px;
+
+  /* 字号 */
+  --mcl-font-xs: 11px;
+  --mcl-font-sm: 12px;
+  --mcl-font-base: 13px;
+  --mcl-font-md: 15px;
+  --mcl-font-lg: 28px;
+
+  /* 动效（活泼弹性档） */
+  --mcl-dur-fast: 180ms;
+  --mcl-dur-base: 320ms;
+  --mcl-dur-slow: 450ms;
+  --mcl-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* 入场/展开：过冲弹性 */
+  --mcl-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1); /* 退场 */
+}

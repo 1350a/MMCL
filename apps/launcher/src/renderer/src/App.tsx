@@ -48,39 +48,42 @@ function App() {
     })
 
   return (
-    <div className="app">
-      <span className="badge">M6 · 多实例隔离 + AI 扩展</span>
-      <h1>MCL</h1>
-      <p className="subtitle">AI 驱动的 Minecraft 启动器 · 多实例隔离 + 版本/Fabric 安装 + AI 装 mod/写扩展/启动</p>
+    <>
+      <div className="bg" aria-hidden="true" />
+      <div className="app">
+        <span className="badge">M6 · 多实例隔离 + AI 扩展</span>
+        <h1>MCL</h1>
+        <p className="subtitle">AI 驱动的 Minecraft 启动器 · 多实例隔离 + 版本/Fabric 安装 + AI 装 mod/写扩展/启动</p>
 
-      <AccountsCard vm={accounts} />
-      <JavaCard vm={java} />
-      <VersionsCard vm={versions} />
-      <InstancesCard
-        vm={instances}
-        game={game}
-        versions={versions}
-        java={java}
-        needJavaMajor={needJavaMajor}
-        account={accounts.account}
-        onLaunch={onLaunch}
-        onBindVersion={onBindVersion}
-      />
-      <ModsCard vm={mods} />
-      <AiCard vm={ai} />
-      {ext.pendingExt && (
-        <ExtReviewCard pending={ext.pendingExt} onApprove={ext.onApproveExt} onReject={ext.onRejectExt} />
-      )}
-      <ExtManageCard vm={ext} />
-      {ext.panels.length > 0 && <ExtPanelsCard panels={ext.panels} run={run} />}
+        <AccountsCard vm={accounts} />
+        <JavaCard vm={java} />
+        <VersionsCard vm={versions} />
+        <InstancesCard
+          vm={instances}
+          game={game}
+          versions={versions}
+          java={java}
+          needJavaMajor={needJavaMajor}
+          account={accounts.account}
+          onLaunch={onLaunch}
+          onBindVersion={onBindVersion}
+        />
+        <ModsCard vm={mods} />
+        <AiCard vm={ai} />
+        {ext.pendingExt && (
+          <ExtReviewCard pending={ext.pendingExt} onApprove={ext.onApproveExt} onReject={ext.onRejectExt} />
+        )}
+        <ExtManageCard vm={ext} />
+        {ext.panels.length > 0 && <ExtPanelsCard panels={ext.panels} run={run} />}
 
-      {message && <div className="error">{message}</div>}
+        {message && <div className="error">{message}</div>}
 
-      <p className="footer">
-        数据流：渲染进程 → preload（白名单 IPC）→ 主进程（LauncherService）→ @mcl/core。
-        离线 UUID 按官方算法生成；版本与资源来自 Mojang 官方源。
-      </p>
-    </div>
+        <p className="footer">
+          数据流：渲染进程 → preload（白名单 IPC）→ 主进程（LauncherService）→ @mcl/core。
+          离线 UUID 按官方算法生成；版本与资源来自 Mojang 官方源。
+        </p>
+      </div>
+    </>
   )
 }
 
