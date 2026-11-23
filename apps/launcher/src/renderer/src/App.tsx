@@ -50,6 +50,7 @@ function App() {
   return (
     <>
       <div className="bg" aria-hidden="true" />
+      <div className="titlebar-drag" aria-hidden="true" />
       <div className="app">
         <span className="badge">M6 · 多实例隔离 + AI 扩展</span>
         <h1>MCL</h1>

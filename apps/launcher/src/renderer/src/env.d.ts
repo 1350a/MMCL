@@ -191,6 +191,15 @@ interface ConfigPatchPayload {
   ui?: UiPrefsPayload
 }
 
+/** Splash 管线进度（UI-DESIGN.md §5）。 */
+interface SplashProgressPayload {
+  step: number
+  total: number
+  label: string
+  detail?: string
+  state: 'running' | 'done' | 'error' | 'background' | 'skipped'
+}
+
 interface MclApi {
   ping: () => Promise<string>
   sha1: (filePath: string) => Promise<string>
@@ -248,6 +257,10 @@ interface MclApi {
   extList: () => Promise<ExtensionSummaryPayload[]>
   extRemove: (id: string) => Promise<SubmitResultPayload>
 
+  splashRetry: () => Promise<void>
+  splashContinue: () => Promise<void>
+
+  onSplashProgress: (callback: (payload: SplashProgressPayload) => void) => Unsubscribe
   onInstallProgress: (callback: (payload: InstallProgressPayload) => void) => Unsubscribe
   onInstallDone: (callback: (payload: InstallDonePayload) => void) => Unsubscribe
   onJavaInstallProgress: (callback: (payload: JavaInstallProgressPayload) => void) => Unsubscribe

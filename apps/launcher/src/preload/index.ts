@@ -77,6 +77,11 @@ const api = {
   extList: () => ipcRenderer.invoke('ext:list'),
   extRemove: (id: string) => ipcRenderer.invoke('ext:remove', id),
 
+  // UI 重构 C4：splash 管线（进度推送 + 错误面板交互）
+  splashRetry: () => ipcRenderer.invoke('splash:retry'),
+  splashContinue: () => ipcRenderer.invoke('splash:continue'),
+
+  onSplashProgress: on('splash:progress'),
   onInstallProgress: on('event:install-progress'),
   onInstallDone: on('event:install-done'),
   onJavaInstallProgress: on('event:java-install-progress'),

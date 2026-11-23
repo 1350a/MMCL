@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import os from 'node:os'
 import { fileSha1 } from '@mcl/core'
 import {
+  defaultConfig,
   ensureGameDirs,
   loadConfig,
   migrateLegacyData,
@@ -14,6 +15,7 @@ import {
   saveConfig
 } from '@mcl/core'
 import { LauncherService } from './launcher'
+import { createSplashWindow, SplashPipeline } from './bootstrap'
 
 const isDev = !!process.env['ELECTRON_RENDERER_URL']
 const isSmokeTest = process.argv.includes('--smoke-test')
@@ -24,58 +26,77 @@ if (process.argv.includes('--no-sandbox')) {
 }
 
 /**
- * 启动引导（UI-DESIGN.md §5 步骤 1-2 的数据层部分）：
+ * Splash 步骤 1-2 + 服务装配（UI-DESIGN.md §5 步骤 1-2 的数据层部分）：
  * .mmcl 目录就绪 → 配置读取（损坏自动重置）→ 游戏根解析（记忆 → 官启探测 → 兜底新建）→
  * 遗留 userData 数据幂等迁移（settings.json 并入 mmcl.json、账户/AI 会话/扩展进 .mmcl、
- * versions/libraries/assets/instances 进游戏根）。
+ * versions/libraries/assets/instances 进游戏根）→ LauncherService 装配。
  */
-async function bootstrapLauncher(send: (channel: string, payload: unknown) => void): Promise<LauncherService> {
+async function bootstrapLauncher(
+  pipeline: SplashPipeline,
+  send: (channel: string, payload: unknown) => void
+): Promise<LauncherService> {
   const mmclDir = resolveMmclDir(os.homedir())
   const configPath = join(mmclDir, 'mmcl.json')
-  let config = await loadConfig(configPath)
 
-  const resolution = resolveGameRoot({
-    mmclDir,
-    lastGameRoot: config.lastGameRoot,
-    officialGameRoot: officialGameRoot(app.getPath('appData'))
+  // 步骤 1：配置读取（损坏 → 重置默认，core 内处理）
+  let config = defaultConfig()
+  await pipeline.runStep(1, async () => {
+    config = await loadConfig(configPath)
   })
-  if (resolution.warning) console.warn('[mcl]', resolution.warning)
-  console.log(`[mcl] 游戏根：${resolution.root}（${resolution.source}）`)
-  await ensureGameDirs(resolution.root)
-  await fs.mkdir(resolveWorkspaceDir(mmclDir), { recursive: true })
 
-  // 遗留数据迁移先于配置落盘：settings.json 的吸收分支要求 mmcl.json 尚未存在
-  // （幂等：源为空即零操作；失败条目保留原地并记日志）
-  const migration = await migrateLegacyData({
-    legacyRoot: app.getPath('userData'),
-    mmclDir,
-    gameRoot: resolution.root,
-    configPath,
-    config
+  // 步骤 2：工作区检查（游戏根解析 + 标准目录补建 + 遗留迁移 + workspace 创建）
+  let dirs = { mmclDir, gameRoot: join(mmclDir, '.minecraft') }
+  await pipeline.runStep(2, async () => {
+    const resolution = resolveGameRoot({
+      mmclDir,
+      lastGameRoot: config.lastGameRoot,
+      officialGameRoot: officialGameRoot(app.getPath('appData'))
+    })
+    if (resolution.warning) console.warn('[mcl]', resolution.warning)
+    console.log(`[mcl] 游戏根：${resolution.root}（${resolution.source}）`)
+    await ensureGameDirs(resolution.root)
+    await fs.mkdir(resolveWorkspaceDir(mmclDir), { recursive: true })
+
+    // 遗留数据迁移先于配置落盘：settings.json 的吸收要求按缺补入而非整文件覆盖
+    // （幂等：源为空即零操作；失败条目保留原地并记日志）
+    const migration = await migrateLegacyData({
+      legacyRoot: app.getPath('userData'),
+      mmclDir,
+      gameRoot: resolution.root,
+      configPath,
+      config
+    })
+    config = migration.config
+    const report = migration.report
+    for (const f of report.failed) console.error('[mcl] 遗留数据迁移失败：', f.item, '→', f.error)
+    if (report.moved.length > 0) {
+      console.log('[mcl] 遗留数据迁移完成：', report.moved.join('、'))
+    }
+
+    if (config.lastGameRoot !== resolution.root) {
+      config.lastGameRoot = resolution.root
+      await saveConfig(configPath, config)
+    }
+    dirs = { mmclDir, gameRoot: resolution.root }
   })
-  config = migration.config
-  const report = migration.report
 
-  if (config.lastGameRoot !== resolution.root) {
-    config.lastGameRoot = resolution.root
-    await saveConfig(configPath, config)
-  }
-
-  for (const f of report.failed) console.error('[mcl] 遗留数据迁移失败：', f.item, '→', f.error)
-  if (report.moved.length > 0) {
-    console.log('[mcl] 遗留数据迁移完成：', report.moved.join('、'))
-  }
-
-  return new LauncherService({ mmclDir, gameRoot: resolution.root }, config, send)
+  return new LauncherService(dirs, config, send)
 }
 
-function createWindow(): void {
+/** 主窗口（titleBarStyle hidden + 系统渲染 caption 按钮，保留 Aero Snap/DPI/Win11 圆角）。 */
+function createWindow(): Promise<void> {
   const win = new BrowserWindow({
     width: 1080,
     height: 720,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#05070d',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#0a0e1a', // 取默认背景图天空顶部近黑藏蓝，Win10 不赌透明色
+      symbolColor: '#dfe3ee',
+      height: 36
+    },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -94,22 +115,26 @@ function createWindow(): void {
     console.log('[mcl] renderer loaded')
   })
 
-  win.on('ready-to-show', () => {
-    win.show()
-    console.log('[mcl] window ready')
-    if (isSmokeTest) {
-      // 落盘标记：供无法捕获 stdout 的 CI/调度器场景验证窗口已就绪
-      writeFileSync(join(process.cwd(), 'smoke-ok.txt'), 'LAUNCHER_SMOKE_OK\n')
-      console.log('LAUNCHER_SMOKE_OK')
-      app.quit()
-    }
+  const ready = new Promise<void>((resolve) => {
+    win.on('ready-to-show', () => {
+      win.show()
+      console.log('[mcl] window ready')
+      resolve()
+      if (isSmokeTest) {
+        // 落盘标记：供无法捕获 stdout 的 CI/调度器场景验证窗口已就绪
+        writeFileSync(join(process.cwd(), 'smoke-ok.txt'), 'LAUNCHER_SMOKE_OK\n')
+        console.log('LAUNCHER_SMOKE_OK')
+        app.quit()
+      }
+    })
   })
 
   if (isDev) {
-    win.loadURL(process.env['ELECTRON_RENDERER_URL']!)
+    void win.loadURL(process.env['ELECTRON_RENDERER_URL']!)
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
+    void win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return ready
 }
 
 function registerIpc(service: LauncherService): void {
@@ -212,13 +237,51 @@ function registerIpc(service: LauncherService): void {
 
 app.whenReady()
   .then(async () => {
-    const service = await bootstrapLauncher((channel, payload) => {
+    const broadcastSend = (channel: string, payload: unknown): void => {
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send(channel, payload)
       }
+    }
+    // 冒烟无头：不建 splash 窗、错误自动跳过
+    const splash = isSmokeTest ? null : createSplashWindow()
+    const pipeline = new SplashPipeline({
+      send: (p) => splash?.webContents.send('splash:progress', p),
+      interactive: !isSmokeTest
     })
+
+    const service = await bootstrapLauncher(pipeline, broadcastSend)
     registerIpc(service)
-    createWindow()
+
+    // 步骤 3：版本初始化（默认实例迁移 + 扫描已装 + 校正 lastVersionId；失败可重试/跳过）
+    await pipeline.runStep(3, async () => {
+      await service.ensureInstancesReady()
+      const installed = await service.listInstalledVersions()
+      const configPath = join(service.dirs.mmclDir, 'mmcl.json')
+      const current = await loadConfig(configPath)
+      if (current.lastVersionId && !installed.includes(current.lastVersionId)) {
+        delete current.lastVersionId
+        await saveConfig(configPath, current)
+      }
+    })
+
+    // 步骤 4：扩展注册（构造器已后台启动；完成经组件宿主事件通知——C5 接通知 UI）
+    pipeline.markBackground(4, '后台进行中，完成后通知')
+
+    // 步骤 5：更新检查（服务器未实装，管线留位）
+    await pipeline.runStep(5, async () => {
+      // 更新服务器未实装（UI-DESIGN.md §9），设置项已落地、逻辑留位
+    })
+
+    // 步骤 6：UI 预热（主窗口创建 + ready-to-show 显示）
+    const ready = createWindow()
+    await pipeline.runStep(6, async () => {
+      await ready
+    })
+
+    // 主窗已显示：splash 淡出后销毁
+    setTimeout(() => {
+      splash?.destroy()
+    }, 350)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -233,7 +296,7 @@ app.whenReady()
     }
   })
   .catch((err) => {
-    // 引导失败（目录不可写等）：无窗挂死不如显式失败退出；C4 splash 管线会接手错误 UI
+    // 引导失败（目录不可写等）：无窗挂死不如显式失败退出
     console.error('[mcl] 启动引导失败：', err)
     app.exit(1)
   })

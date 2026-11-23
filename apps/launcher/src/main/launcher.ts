@@ -552,6 +552,11 @@ export class LauncherService {
 
   // ---- 多实例（M6，DESIGN.md §5.7）----
 
+  /** 等待默认实例迁移完成（splash 步骤 3 / 实例类 IPC 的公共门）。 */
+  ensureInstancesReady(): Promise<unknown> {
+    return this.instanceReady
+  }
+
   /** 实例清单（等默认实例迁移完成）。 */
   async listInstancesPayload(): Promise<InstanceMeta[]> {
     await this.instanceReady

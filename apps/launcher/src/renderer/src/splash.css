@@ -1,0 +1,120 @@
+/* Splash 页样式（独立入口，不走 @layer；背景与主页同源） */
+body {
+  background: #05070d;
+  overflow: hidden;
+  user-select: none;
+}
+
+.splash {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+}
+
+.splash-logo {
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  background: linear-gradient(135deg, var(--mcl-primary), var(--mcl-cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: splash-in var(--mcl-dur-slow) var(--mcl-spring) both;
+}
+
+.splash-sub {
+  color: var(--mcl-text-muted);
+  font-size: var(--mcl-font-sm);
+}
+
+.splash-progress {
+  width: 240px;
+  height: 4px;
+  border-radius: var(--mcl-radius-pill);
+  background: var(--mcl-glass-deep);
+  overflow: hidden;
+  margin-top: 14px;
+}
+
+.splash-bar {
+  height: 100%;
+  width: 4%;
+  border-radius: var(--mcl-radius-pill);
+  background: var(--mcl-gradient-primary);
+  transition: width var(--mcl-dur-base) var(--mcl-ease-out);
+}
+
+.splash-step {
+  color: var(--mcl-text-secondary);
+  font-size: var(--mcl-font-sm);
+  min-height: 18px;
+}
+
+.splash-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  animation: splash-in var(--mcl-dur-base) var(--mcl-spring) both;
+}
+
+.splash-error[hidden] {
+  display: none;
+}
+
+.splash-error-text {
+  color: var(--mcl-danger);
+  font-size: var(--mcl-font-sm);
+  max-width: 360px;
+  word-break: break-all;
+  text-align: center;
+}
+
+.splash-error-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.splash-error-actions button {
+  background: var(--mcl-glass);
+  border: 1px solid var(--mcl-border-strong);
+  color: var(--mcl-text);
+  border-radius: var(--mcl-radius-md);
+  padding: 6px 18px;
+  font-size: var(--mcl-font-base);
+  cursor: pointer;
+}
+
+.splash-error-actions button:hover {
+  border-color: var(--mcl-primary);
+  color: var(--mcl-primary);
+}
+
+/* 完成淡出 */
+body.splash-out .splash {
+  animation: splash-out var(--mcl-dur-base) var(--mcl-ease-out) both;
+}
+
+@keyframes splash-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes splash-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}

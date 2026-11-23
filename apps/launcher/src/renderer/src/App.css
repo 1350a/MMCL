@@ -8,6 +8,17 @@
     opacity: 0.8;
   }
 
+  /* C4 过渡：自绘顶栏的拖拽区（C5 换正式 TitleBar 组件）；右侧留系统 Caption 按钮区 */
+  .titlebar-drag {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 140px;
+    height: 36px;
+    -webkit-app-region: drag;
+    z-index: 100;
+  }
+
   .app {
     max-width: 720px;
     margin: 0 auto;
