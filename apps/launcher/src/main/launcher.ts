@@ -38,6 +38,7 @@ import {
   resolveApiRoot,
   resolveInstalledVersion,
   saveAccounts,
+  saveConfig,
   updateInstance,
   validate,
   validatePlayerName,
@@ -49,10 +50,13 @@ import type {
   InstanceMeta,
   JavaAgentOptions,
   ModFileInfo,
+  MmclConfig,
   OfflineAccount,
   ProfileWithSkin,
   RuntimeInfo,
   JavaInfo,
+  UiPrefs,
+  UpdateMode,
   VersionJson,
   VersionManifest,
   YggdrasilAccount,
@@ -107,16 +111,38 @@ export type YggdrasilLoginResult =
 /** 渲染进程可见的账户信息（不含 token）。 */
 export type AccountPayload = OfflineAccount | Omit<YggdrasilAccount, 'accessToken' | 'clientToken'>
 
-interface SettingsFile {
+/** 启动器数据目录与游戏根（UI-DESIGN.md §4 布局）。 */
+export interface LauncherDirs {
+  /** 启动器自身数据：%USERPROFILE%\.mmcl（配置/账户/AI 会话/扩展/运行时）。 */
+  readonly mmclDir: string
+  /** 游戏根（versions/libraries/assets/instances）。 */
+  readonly gameRoot: string
+}
+
+/** 渲染进程可见的全局配置（剥 clientToken；AI key 只出掩码）。 */
+export interface ConfigPayload {
+  lastGameRoot?: string
+  lastVersionId?: string
   javaPath?: string
-  ai?: AiSettings
-  /** 本启动器实例的 clientToken（首次登录时生成，长期复用）。 */
-  clientToken?: string
+  ai?: { baseUrl: string; model: string; apiKeyMasked: string }
+  updates?: UpdateMode
+  autoCleanupVersions?: boolean
+  downloadSource?: 'official' | 'bmclapi'
+  ui?: UiPrefs
+}
+
+/** 渲染层可修改的配置子集（clientToken/lastGameRoot/ai 不在白名单内）。 */
+export interface ConfigPatchPayload {
+  /** 空串 = 清除手动路径（回退自动探测）。 */
+  javaPath?: string
+  updates?: UpdateMode
+  autoCleanupVersions?: boolean
+  downloadSource?: 'official' | 'bmclapi'
+  ui?: UiPrefs
 }
 
 /** 启动器运行时状态与编排：IPC 路由层只调用这里的方法。 */
 export class LauncherService {
-  private readonly settingsPath: string
   private manifest: VersionManifest | null = null
   private installing = false
   private javaInstalling = false
@@ -135,36 +161,42 @@ export class LauncherService {
   /** AI 会话落盘文件（重启恢复对话，MVP 收尾）。 */
   private readonly aiSessionPath: string
 
+  /** 全局配置（内存态；写操作经 persistConfig 落盘 mmcl.json）。 */
+  private config: MmclConfig
+  private readonly configPath: string
+
   constructor(
-    readonly rootDir: string,
+    readonly dirs: LauncherDirs,
+    config: MmclConfig,
     private readonly send: (channel: string, payload: unknown) => void
   ) {
-    this.settingsPath = join(rootDir, 'settings.json')
+    this.config = config
+    this.configPath = join(dirs.mmclDir, 'mmcl.json')
     this.capabilities = createCapabilityProviders({
       send: this.send,
-      instanceDirFor: (id) => join(rootDir, 'instances', id)
+      instanceDirFor: (id) => join(dirs.gameRoot, 'instances', id)
     })
     this.components = new ComponentHost({
       providers: this.capabilities.providers,
       onChange: (info) => console.log(`[components] ${info.id} → ${info.state}${info.reason ? `（${info.reason}）` : ''}`)
     })
     this.pipeline = new ExtensionPipeline({
-      extensionsDir: join(rootDir, 'extensions'),
+      extensionsDir: join(dirs.mmclDir, 'extensions'),
       host: this.components,
       notify: (channel, payload) => this.send(channel, payload)
     })
-    this.instanceReady = ensureDefaultInstance(rootDir).catch((err) => {
+    this.instanceReady = ensureDefaultInstance(dirs.gameRoot).catch((err) => {
       console.error('[instances] 默认实例初始化失败：', err)
       throw err instanceof Error ? err : new Error(String(err))
     })
-    this.aiSessionPath = join(rootDir, 'ai-session.json')
+    this.aiSessionPath = join(dirs.mmclDir, 'ai-session.json')
     this.components.setCoEffect('game.notRunning', true)
     this.components.setCoEffect('ai.configured', this.isAiConfigured())
     this.components.register(createAiToolsComponent(this.aiToolsDeps()))
     // M5-3：扩展装载管线（WASM 预热 → demo 落盘 → 扫描装载；失败不阻塞启动器，仅少扩展）
     void initExtRuntime()
       .then(async () => {
-        const extensionsDir = join(this.rootDir, 'extensions')
+        const extensionsDir = join(dirs.mmclDir, 'extensions')
         await ensureDemoExtension(extensionsDir)
         const { loaded, errors } = await scanExtensions(extensionsDir)
         for (const e of errors) console.error('[extensions]', e.dir, '→', e.reason)
@@ -180,21 +212,13 @@ export class LauncherService {
       .catch((err) => console.error('[components] 沙箱扩展装载失败：', err))
   }
 
-  private readSettings(): SettingsFile {
-    try {
-      return JSON.parse(readFileSync(this.settingsPath, 'utf8')) as SettingsFile
-    } catch {
-      return {}
-    }
-  }
-
-  private async writeSettings(settings: SettingsFile): Promise<void> {
-    await fs.mkdir(this.rootDir, { recursive: true })
-    await fs.writeFile(this.settingsPath, JSON.stringify(settings, null, 2))
+  /** 配置落盘（内存态 → mmcl.json；调用方先改 this.config 再调这里）。 */
+  private async persistConfig(): Promise<void> {
+    await saveConfig(this.configPath, this.config)
   }
 
   async getSettings(): Promise<SettingsPayload> {
-    const { javaPath } = this.readSettings()
+    const javaPath = this.config.javaPath
     const payload: SettingsPayload = { javaPath: javaPath ?? '' }
     if (javaPath) {
       try {
@@ -212,16 +236,67 @@ export class LauncherService {
   async setJavaPath(javaPath: string): Promise<SettingsPayload> {
     if (typeof javaPath !== 'string') throw new Error('invalid java path')
     if (javaPath.trim() === '') {
-      await this.writeSettings({})
+      // 只清 javaPath，保留 ai/clientToken 等其余字段（修复旧实现整文件覆写的 bug）
+      delete this.config.javaPath
+      await this.persistConfig()
       return this.getSettings()
     }
     const java = await detectJava(javaPath)
-    await this.writeSettings({ javaPath })
+    this.config.javaPath = javaPath
+    await this.persistConfig()
     return { javaPath, javaMajor: java.majorVersion, javaRaw: java.raw }
   }
 
+  // ---- 全局配置（UI-DESIGN.md §3：.mmcl\mmcl.json）----
+
+  getConfigPayload(): ConfigPayload {
+    const { ai, clientToken: _t, ...rest } = this.config
+    return {
+      ...rest,
+      ...(ai
+        ? {
+            ai: {
+              baseUrl: ai.baseUrl,
+              model: ai.model,
+              apiKeyMasked: ai.apiKey ? `${ai.apiKey.slice(0, 6)}...${ai.apiKey.slice(-4)}` : ''
+            }
+          }
+        : {})
+    }
+  }
+
+  /** 白名单字段合并更新（clientToken/lastGameRoot/ai 不经此改：ai 走 ai:setConfig）。 */
+  async setConfig(patch: ConfigPatchPayload): Promise<ConfigPayload> {
+    if (typeof patch !== 'object' || patch === null) throw new Error('invalid config patch')
+    if (patch.javaPath !== undefined) {
+      if (typeof patch.javaPath !== 'string') throw new Error('invalid java path')
+      if (patch.javaPath.trim() === '') delete this.config.javaPath
+      else this.config.javaPath = patch.javaPath
+    }
+    if (patch.updates !== undefined) {
+      if (!['auto', 'notify', 'notifyImportant', 'off'].includes(patch.updates)) throw new Error('invalid updates mode')
+      this.config.updates = patch.updates
+    }
+    if (patch.autoCleanupVersions !== undefined) {
+      if (typeof patch.autoCleanupVersions !== 'boolean') throw new Error('invalid autoCleanupVersions')
+      this.config.autoCleanupVersions = patch.autoCleanupVersions
+    }
+    if (patch.downloadSource !== undefined) {
+      if (patch.downloadSource !== 'official' && patch.downloadSource !== 'bmclapi') {
+        throw new Error('invalid download source')
+      }
+      this.config.downloadSource = patch.downloadSource
+    }
+    if (patch.ui !== undefined) {
+      if (typeof patch.ui !== 'object' || patch.ui === null) throw new Error('invalid ui prefs')
+      this.config.ui = { ...this.config.ui, ...patch.ui }
+    }
+    await this.persistConfig()
+    return this.getConfigPayload()
+  }
+
   async getAccount(): Promise<Account | null> {
-    const accounts = await loadAccounts(this.rootDir)
+    const accounts = await loadAccounts(this.dirs.mmclDir)
     return accounts[0] ?? null
   }
 
@@ -241,7 +316,7 @@ export class LauncherService {
     if (typeof name !== 'string') throw new Error('invalid account name')
     validatePlayerName(name)
     const account: OfflineAccount = { kind: 'offline', name, uuid: '' }
-    await saveAccounts(this.rootDir, [account])
+    await saveAccounts(this.dirs.mmclDir, [account])
     return { kind: 'offline', name, uuid: '' }
   }
 
@@ -251,10 +326,10 @@ export class LauncherService {
   private pendingYgAuth: { apiRoot: string; serverName?: string; auth: AuthenticateResponse } | null = null
 
   private async clientToken(): Promise<string> {
-    const settings = this.readSettings()
-    if (settings.clientToken) return settings.clientToken
+    if (this.config.clientToken) return this.config.clientToken
     const token = generateClientToken()
-    await this.writeSettings({ ...settings, clientToken: token })
+    this.config.clientToken = token
+    await this.persistConfig()
     return token
   }
 
@@ -317,7 +392,7 @@ export class LauncherService {
       clientToken: auth.clientToken,
       ...(serverName ? { serverName } : {})
     }
-    await saveAccounts(this.rootDir, [account])
+    await saveAccounts(this.dirs.mmclDir, [account])
     this.send('event:account-changed', this.toPayload(account))
   }
 
@@ -330,7 +405,7 @@ export class LauncherService {
         clientToken: account.clientToken
       }).catch(() => undefined) // 吊销失败不阻塞登出
     }
-    await saveAccounts(this.rootDir, [])
+    await saveAccounts(this.dirs.mmclDir, [])
     this.send('event:account-changed', null)
   }
 
@@ -369,7 +444,7 @@ export class LauncherService {
       )
     }
     const updated: YggdrasilAccount = { ...account, accessToken: refreshed.accessToken }
-    await saveAccounts(this.rootDir, [updated])
+    await saveAccounts(this.dirs.mmclDir, [updated])
     return updated
   }
 
@@ -395,7 +470,7 @@ export class LauncherService {
   }
 
   async listInstalledVersions(): Promise<string[]> {
-    const dir = join(this.rootDir, 'versions')
+    const dir = join(this.dirs.gameRoot, 'versions')
     try {
       const entries = await fs.readdir(dir, { withFileTypes: true })
       const ids: string[] = []
@@ -447,7 +522,7 @@ export class LauncherService {
     this.installAbort = controller
     try {
       const versionJson = await this.resolveVersionJson(id)
-      await installVersion(versionJson, this.rootDir, {
+      await installVersion(versionJson, this.dirs.gameRoot, {
         onProgress: (p) => this.send('event:install-progress', p),
         signal: controller.signal,
         // 官方库源在校园网实测会被劫持/不可达，失败回退 BMCLAPI 镜像（官方源仍优先）
@@ -470,9 +545,9 @@ export class LauncherService {
     this.installAbort?.abort()
   }
 
-  /** 实例目录（mods/options.txt/saves/logs 都在这里）。 */
+  /** 实例目录（mods/options.txt/saves/logs 都在这里，随游戏根走）。 */
   private instanceDirFor(instanceId: string): string {
-    return join(this.rootDir, 'instances', instanceId)
+    return join(this.dirs.gameRoot, 'instances', instanceId)
   }
 
   // ---- 多实例（M6，DESIGN.md §5.7）----
@@ -480,7 +555,7 @@ export class LauncherService {
   /** 实例清单（等默认实例迁移完成）。 */
   async listInstancesPayload(): Promise<InstanceMeta[]> {
     await this.instanceReady
-    return listInstances(this.rootDir)
+    return listInstances(this.dirs.gameRoot)
   }
 
   /**
@@ -492,7 +567,7 @@ export class LauncherService {
     const id = typeof input.id === 'string' && input.id.trim() !== '' ? input.id.trim() : `inst-${Date.now().toString(36)}`
     const versionId = typeof input.versionId === 'string' && input.versionId !== '' ? input.versionId : undefined
     if (versionId) await this.assertVersionInstalled(versionId)
-    return createInstance(this.rootDir, { id, name: input.name, ...(versionId ? { versionId } : {}) })
+    return createInstance(this.dirs.gameRoot, { id, name: input.name, ...(versionId ? { versionId } : {}) })
   }
 
   /** 给实例绑定已安装版本（versionId 可后续更换）。 */
@@ -501,7 +576,7 @@ export class LauncherService {
     if (typeof versionId !== 'string' || versionId.length === 0) throw new Error('invalid version id')
     await this.instanceReady
     await this.assertVersionInstalled(versionId)
-    return updateInstance(this.rootDir, instanceId, { versionId })
+    return updateInstance(this.dirs.gameRoot, instanceId, { versionId })
   }
 
   /**
@@ -513,7 +588,7 @@ export class LauncherService {
   async deleteInstancePayload(instanceId: string): Promise<void> {
     if (this.game) throw new Error('游戏正在运行，请先停止再删除实例')
     await this.instanceReady
-    await deleteInstance(this.rootDir, instanceId)
+    await deleteInstance(this.dirs.gameRoot, instanceId)
   }
 
   /** 断言版本已安装（绑定版本时的即时反馈，避免启动时才发现绑错）。 */
@@ -529,13 +604,13 @@ export class LauncherService {
     if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (this.game) throw new Error('已有游戏在运行')
     await this.instanceReady
-    const instance = await getInstance(this.rootDir, instanceId)
+    const instance = await getInstance(this.dirs.gameRoot, instanceId)
     const id = instance.versionId
     if (!id) throw new Error(`实例 ${instance.name}（${instanceId}）尚未绑定版本：请先在实例卡选择版本，或让 AI 用 create_instance 创建`)
     let account = await this.getAccount()
     if (!account) throw new Error('请先创建账户')
     // 解析继承链（fabric 等子版本）：合并父版本库/参数，client jar 取继承链根的
-    const resolved = await resolveInstalledVersion(this.rootDir, id)
+    const resolved = await resolveInstalledVersion(this.dirs.gameRoot, id)
     const versionJson = resolved.json
 
     // 外置登录：先走凭据链（validate → refresh → 重登提示），再备齐 authlib-injector jar 与预取元数据
@@ -543,7 +618,7 @@ export class LauncherService {
     if (account.kind === 'yggdrasil') {
       account = await this.ensureYggdrasilCredential(account)
       const [injector, meta] = await Promise.all([
-        ensureAuthlibInjector(this.rootDir),
+        ensureAuthlibInjector(this.dirs.mmclDir),
         fetchServerMeta(account.apiRoot)
       ])
       javaAgent = { jarPath: injector.jarPath, apiRoot: account.apiRoot, prefetched: meta.prefetched }
@@ -555,7 +630,7 @@ export class LauncherService {
       javaPath: java.path,
       account,
       gameDir: this.instanceDirFor(instanceId),
-      rootDir: this.rootDir,
+      rootDir: this.dirs.gameRoot,
       launcherName: 'MCL',
       launcherVersion: '0.1.0',
       ...(javaAgent ? { javaAgent } : {}),
@@ -593,7 +668,7 @@ export class LauncherService {
    * 用内置 runtime（pickRuntime 取满足 major 的最小版本）→ 都没有则抛引导错误。
    */
   private async resolveJava(versionJson: VersionJson): Promise<JavaInfo> {
-    const { javaPath } = this.readSettings()
+    const javaPath = this.config.javaPath
     const java = await detectJava(javaPath || undefined)
     try {
       assertJavaCompatible(java, versionJson)
@@ -601,7 +676,7 @@ export class LauncherService {
     } catch (err) {
       if (!(err instanceof JavaVersionMismatchError)) throw err
       const required = err.requiredMajorVersion
-      const runtimes = await listInstalledRuntimes(this.rootDir)
+      const runtimes = await listInstalledRuntimes(this.dirs.mmclDir)
       const builtin = pickRuntime(runtimes, required)
       if (builtin) {
         return { path: builtin.javaPath, majorVersion: builtin.major, raw: `builtin-${builtin.major}` }
@@ -614,7 +689,7 @@ export class LauncherService {
 
   /** 内置运行时列表。 */
   listRuntimes(): Promise<RuntimeInfo[]> {
-    return listInstalledRuntimes(this.rootDir)
+    return listInstalledRuntimes(this.dirs.mmclDir)
   }
 
   /** 下载内置 Java 运行时（Temurin JRE，约 45MB），进度经事件推送；可经 cancelRuntimeInstall 取消。 */
@@ -625,7 +700,7 @@ export class LauncherService {
     const controller = new AbortController()
     this.javaInstallAbort = controller
     try {
-      const info = await installRuntime(this.rootDir, major, {
+      const info = await installRuntime(this.dirs.mmclDir, major, {
         onProgress: (p) => this.send('event:java-install-progress', p),
         signal: controller.signal
       })
@@ -660,7 +735,7 @@ export class LauncherService {
     const controller = new AbortController()
     this.installAbort = controller
     try {
-      const result = await installFabric(this.rootDir, gameVersion, chosen, {
+      const result = await installFabric(this.dirs.gameRoot, gameVersion, chosen, {
         onProgress: (p) => this.send('event:install-progress', p),
         signal: controller.signal
       })
@@ -723,7 +798,7 @@ export class LauncherService {
   private aiRequesting = false
 
   getAiConfig(): AiConfigPayload {
-    const { ai } = this.readSettings()
+    const { ai } = this.config
     const configured = !!(ai?.baseUrl && ai?.apiKey && ai?.model)
     return {
       baseUrl: ai?.baseUrl ?? '',
@@ -742,18 +817,17 @@ export class LauncherService {
     ) {
       throw new Error('invalid AI config')
     }
-    const settings = this.readSettings()
-    settings.ai = { baseUrl: ai.baseUrl.trim(), apiKey: ai.apiKey.trim(), model: ai.model.trim() }
-    await this.writeSettings(settings)
+    this.config.ai = { baseUrl: ai.baseUrl.trim(), apiKey: ai.apiKey.trim(), model: ai.model.trim() }
+    await this.persistConfig()
     // 配置变化：重置会话（客户端参数已变），并更新协效应（组件按需激活/停用）
     this.aiSession = null
-    this.components.setCoEffect('ai.configured', !!(settings.ai.baseUrl && settings.ai.apiKey && settings.ai.model))
+    this.components.setCoEffect('ai.configured', this.isAiConfigured())
     return this.getAiConfig()
   }
 
   /** AI 是否已完整配置（协效应 ai.configured 的真值来源）。 */
   private isAiConfigured(): boolean {
-    const { ai } = this.readSettings()
+    const { ai } = this.config
     return !!(ai?.baseUrl && ai?.apiKey && ai?.model)
   }
 
@@ -762,7 +836,7 @@ export class LauncherService {
     return {
       listInstalledVersions: () => this.listInstalledVersions(),
       listRuntimes: () => this.listRuntimes(),
-      javaPath: () => this.readSettings().javaPath ?? '',
+      javaPath: () => this.config.javaPath ?? '',
       isGameRunning: () => this.isGameRunning(),
       instanceDirFor: (instanceId) => this.instanceDirFor(instanceId),
       listInstancesPayload: () => this.listInstancesPayload(),
@@ -781,7 +855,7 @@ export class LauncherService {
     return [
       '你是 Minecraft 第三方启动器 MCL 的内置助手。',
       '回答简洁、可操作；涉及版本与运行状态时优先调用工具查询而不是猜测。',
-      '用户环境为 Windows；游戏实例在启动器数据目录 instances/<实例 id> 下（多实例：list_instances 查看、create_instance 新建）。每个实例绑定一个已安装版本，launch_game 按实例启动；装 mod / 改配置默认作用于 main 实例，可用 instanceId 参数指定其他实例。',
+      '用户环境为 Windows；游戏实例在游戏根目录 instances/<实例 id> 下（多实例：list_instances 查看、create_instance 新建）。每个实例绑定一个已安装版本，launch_game 按实例启动；装 mod / 改配置默认作用于 main 实例，可用 instanceId 参数指定其他实例。',
       '装 mod 流程：确认目标实例已绑定（或绑定）合适版本 → install_fabric 装 Fabric 加载器 → search_mods（带 gameVersion+loader）→ install_mod（project/gameVersion/loader 必填）→ 建议用户启动对应实例（launch_game）。',
       '改游戏设置用 read_config / write_config（options.txt，游戏下次启动生效）；启动游戏用 launch_game。',
       '对启动器或 mod 有不确定的版本兼容问题时，先向用户确认再操作。',
@@ -794,7 +868,7 @@ export class LauncherService {
   async aiSend(text: string): Promise<{ content: string }> {
     if (typeof text !== 'string' || text.trim() === '') throw new Error('empty message')
     if (this.aiRequesting) throw new Error('已有 AI 请求进行中，请等待当前回复完成')
-    const { ai } = this.readSettings()
+    const { ai } = this.config
     if (!ai?.baseUrl || !ai?.apiKey || !ai?.model) {
       throw new Error('请先在 AI 卡片配置 baseURL / apiKey / model')
     }

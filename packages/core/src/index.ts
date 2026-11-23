@@ -1,5 +1,21 @@
 export { VERSION } from './version-constants'
 
+export { defaultConfig, loadConfig, saveConfig } from './config'
+export type { AiConfig, MmclConfig, UiPrefs, UpdateMode } from './config'
+
+export {
+  ensureGameDirs,
+  fallbackGameRoot,
+  officialGameRoot,
+  resolveGameRoot,
+  resolveMmclDir,
+  resolveWorkspaceDir
+} from './launcherPaths'
+export type { GameRootResolution, GameRootSource } from './launcherPaths'
+
+export { migrateLegacyData } from './migrate'
+export type { LegacyMigrationReport } from './migrate'
+
 export { downloadFile, assertSafeRemoteUrl, fetchJsonWithRetry } from './download'
 export type { DownloadOptions } from './download'
 

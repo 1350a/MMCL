@@ -14,6 +14,14 @@ const api = {
 
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setJavaPath: (javaPath: string) => ipcRenderer.invoke('settings:setJavaPath', javaPath),
+  getConfig: () => ipcRenderer.invoke('config:get'),
+  setConfig: (patch: {
+    javaPath?: string
+    updates?: 'auto' | 'notify' | 'notifyImportant' | 'off'
+    autoCleanupVersions?: boolean
+    downloadSource?: 'official' | 'bmclapi'
+    ui?: { sidebarHidden?: boolean; backgroundPath?: string }
+  }) => ipcRenderer.invoke('config:set', patch),
   getAccount: () => ipcRenderer.invoke('account:get'),
   saveAccount: (name: string) => ipcRenderer.invoke('account:save', name),
 

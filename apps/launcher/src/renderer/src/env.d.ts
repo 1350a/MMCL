@@ -164,12 +164,41 @@ interface SubmitResultPayload {
   message: string
 }
 
+/** UI 偏好（外观类设置）。 */
+interface UiPrefsPayload {
+  sidebarHidden?: boolean
+  backgroundPath?: string
+}
+
+/** 全局配置（渲染层可见形态：AI key 只出掩码）。 */
+interface ConfigPayload {
+  lastGameRoot?: string
+  lastVersionId?: string
+  javaPath?: string
+  ai?: { baseUrl: string; model: string; apiKeyMasked: string }
+  updates?: 'auto' | 'notify' | 'notifyImportant' | 'off'
+  autoCleanupVersions?: boolean
+  downloadSource?: 'official' | 'bmclapi'
+  ui?: UiPrefsPayload
+}
+
+/** 可修改的配置子集（javaPath 空串 = 清除手动路径）。 */
+interface ConfigPatchPayload {
+  javaPath?: string
+  updates?: 'auto' | 'notify' | 'notifyImportant' | 'off'
+  autoCleanupVersions?: boolean
+  downloadSource?: 'official' | 'bmclapi'
+  ui?: UiPrefsPayload
+}
+
 interface MclApi {
   ping: () => Promise<string>
   sha1: (filePath: string) => Promise<string>
 
   getSettings: () => Promise<SettingsPayload>
   setJavaPath: (javaPath: string) => Promise<SettingsPayload>
+  getConfig: () => Promise<ConfigPayload>
+  setConfig: (patch: ConfigPatchPayload) => Promise<ConfigPayload>
   getAccount: () => Promise<AccountPayload | null>
   saveAccount: (name: string) => Promise<OfflineAccountPayload>
 
