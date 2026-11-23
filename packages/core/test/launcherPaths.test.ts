@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ensureGameDirs, fallbackGameRoot, officialGameRoot, resolveGameRoot, resolveMmclDir, resolveWorkspaceDir } from '../src'
+import {
+  assertDirWritable,
+  ensureGameDirs,
+  fallbackGameRoot,
+  officialGameRoot,
+  resolveGameRoot,
+  resolveMmclDir,
+  resolveWorkspaceDir
+} from '../src'
 
 describe('resolveMmclDir / resolveWorkspaceDir', () => {
   it('固定为 %USERPROFILE%\\.mmcl 及其下的 workspace', () => {
@@ -75,6 +83,26 @@ describe('ensureGameDirs（缺什么文件夹补建什么）', () => {
     }
     await ensureGameDirs(root) // 幂等
     expect((await readdir(root)).length).toBe(first.length)
+    await rm(root, { recursive: true, force: true })
+  })
+})
+
+describe('assertDirWritable（目录可写校验）', () => {
+  it('可写目录通过；不存在时先创建', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mcl-writable-test-'))
+    const target = join(root, 'new-root')
+    await assertDirWritable(target)
+    expect(await readdir(target)).toEqual([]) // 探测文件已清理
+    await assertDirWritable(root) // 已存在目录同样通过
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('不可写路径报错并带上目录与原因', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mcl-unwritable-test-'))
+    const file = join(root, 'occupied')
+    await (await import('node:fs/promises')).writeFile(file, 'x')
+    // 父路径是文件：mkdir 必然失败（跨平台稳定，不依赖 ACL）
+    await expect(assertDirWritable(join(file, 'sub'))).rejects.toThrow(/目录不可写/)
     await rm(root, { recursive: true, force: true })
   })
 })

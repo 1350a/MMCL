@@ -1,0 +1,101 @@
+@layer pages {
+  /* ===== 页面骨架（下载页 C6；设置/插件页复用同一容器与列表行） ===== */
+  .page {
+    flex: 1;
+    min-height: 0;
+    max-width: 680px;
+    width: 100%;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    padding-right: 4px;
+    animation: page-in var(--mcl-dur-base) var(--mcl-spring) both;
+  }
+
+  .page .card {
+    margin-bottom: 0;
+  }
+
+  .page-sub {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+    letter-spacing: 1px;
+    margin: 14px 0 4px;
+  }
+
+  .page-hint {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+    margin-bottom: 8px;
+    line-height: 1.6;
+  }
+
+  .page-empty {
+    font-size: var(--mcl-font-sm);
+    color: var(--mcl-text-muted);
+    padding: 6px 2px;
+  }
+
+  .page-list {
+    margin-top: 6px;
+  }
+
+  .page-size {
+    flex: none;
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+  }
+
+  .page-ok {
+    flex: none;
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-success);
+  }
+
+  .page-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  /* 通用列表行（已装版本 / mods / 运行时共用） */
+  .list-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 2px;
+    border-bottom: 1px dashed var(--mcl-border);
+    font-size: var(--mcl-font-sm);
+  }
+
+  .list-row:last-child {
+    border-bottom: none;
+  }
+
+  .list-row-main {
+    flex: 1;
+    min-width: 0;
+    word-break: break-all;
+  }
+
+  .list-row-act {
+    flex: none;
+    font-size: var(--mcl-font-xs);
+    padding: 3px 10px;
+  }
+
+  .mono {
+    font-family: Consolas, monospace;
+  }
+
+  .game-root-path {
+    flex: 1;
+    font-family: Consolas, monospace;
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-secondary);
+    word-break: break-all;
+    align-self: center;
+  }
+}

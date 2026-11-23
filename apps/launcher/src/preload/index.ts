@@ -82,6 +82,10 @@ const api = {
   extList: () => ipcRenderer.invoke('ext:list'),
   extRemove: (id: string) => ipcRenderer.invoke('ext:remove', id),
 
+  // UI 重构 C6：系统原生目录选择 + 游戏根切换（重启生效）
+  pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:pick-directory'),
+  setGameRoot: (path: string) => ipcRenderer.invoke('gameRoot:set', path),
+
   // UI 重构 C4：splash 管线（进度推送 + 错误面板交互）
   splashRetry: () => ipcRenderer.invoke('splash:retry'),
   splashContinue: () => ipcRenderer.invoke('splash:continue'),

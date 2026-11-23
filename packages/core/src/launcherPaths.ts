@@ -76,3 +76,20 @@ export async function ensureGameDirs(gameRoot: string): Promise<void> {
   const { promises: fs } = await import('node:fs')
   await Promise.all(GAME_ROOT_DIRS.map((d) => fs.mkdir(join(gameRoot, d), { recursive: true })))
 }
+
+/**
+ * 校验目录可写：以写探测文件并删除为准（Windows 上 access(W_OK) 对只读属性/ACL 不可靠）。
+ * 目录不存在时先递归创建（用户选的新游戏根路径允许尚不存在）。
+ */
+export async function assertDirWritable(dir: string): Promise<void> {
+  const { promises: fs } = await import('node:fs')
+  try {
+    await fs.mkdir(dir, { recursive: true })
+    const probe = join(dir, `.mmcl-write-probe-${process.pid}-${Date.now()}`)
+    await fs.writeFile(probe, 'probe')
+    await fs.rm(probe, { force: true })
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new Error(`目录不可写：${dir}（${detail}）`)
+  }
+}

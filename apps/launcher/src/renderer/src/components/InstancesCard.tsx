@@ -69,7 +69,7 @@ export function InstancesCard({
           保存绑定
         </button>
         <button
-          onClick={versions.onInstallFabric}
+          onClick={() => versions.onInstallFabric()}
           disabled={!versions.selectedInstalled || versions.installing || versions.selectedInstalled.startsWith('fabric-loader-')}
           title={
             versions.selectedInstalled.startsWith('fabric-loader-')

@@ -4,6 +4,7 @@ export { defaultConfig, loadConfig, saveConfig } from './config'
 export type { AiConfig, MmclConfig, UiPrefs, UpdateMode } from './config'
 
 export {
+  assertDirWritable,
   ensureGameDirs,
   fallbackGameRoot,
   officialGameRoot,

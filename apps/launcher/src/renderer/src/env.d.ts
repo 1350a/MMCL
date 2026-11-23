@@ -222,6 +222,12 @@ interface SplashProgressPayload {
   state: 'running' | 'done' | 'error' | 'background' | 'skipped'
 }
 
+/** 游戏根切换结果（C6：不做热切换，重启启动器后生效）。 */
+interface SetGameRootResultPayload {
+  gameRoot: string
+  requiresRestart: boolean
+}
+
 interface MclApi {
   ping: () => Promise<string>
   sha1: (filePath: string) => Promise<string>
@@ -285,6 +291,9 @@ interface MclApi {
 
   splashRetry: () => Promise<void>
   splashContinue: () => Promise<void>
+
+  pickDirectory: () => Promise<string | null>
+  setGameRoot: (path: string) => Promise<SetGameRootResultPayload>
 
   onSplashProgress: (callback: (payload: SplashProgressPayload) => void) => Unsubscribe
   onNotify: (callback: (payload: NotifyPayload) => void) => Unsubscribe

@@ -52,13 +52,14 @@ export function useVersions(run: Run, setMessage: (m: string) => void) {
       setMessage('安装取消中…')
     })
 
-  const onInstallFabric = () =>
+  const onInstallFabric = (target?: string) =>
     run(async () => {
-      if (!selectedInstalled) return
+      const gameVersion = target ?? selectedInstalled
+      if (!gameVersion) return
       setInstalling(true)
       setInstallError('')
       setProgress({ completed: 0, total: 0, file: '准备 Fabric…' })
-      await window.mcl.installFabric(selectedInstalled)
+      await window.mcl.installFabric(gameVersion)
       // 完成后经 event:install-done 刷新版本列表并选中新 fabric 版本
     })
 

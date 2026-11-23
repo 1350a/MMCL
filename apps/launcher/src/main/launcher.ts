@@ -4,15 +4,19 @@ import { randomUUID } from 'node:crypto'
 import type { ChildProcess } from 'node:child_process'
 import {
   assembleLaunch,
+  assertDirWritable,
   assertJavaCompatible,
   authenticate,
   BMCLAPI_MAVEN_BASE,
+  BMCLAPI_MANIFEST_URL,
   createInstance,
+  DEFAULT_MANIFEST_URL,
   deleteInstance,
   deleteVersionArtifacts,
   detectJava,
   ensureAuthlibInjector,
   ensureDefaultInstance,
+  ensureGameDirs,
   fetchFabricLoaderVersions,
   fetchProfileWithSkin,
   fetchServerMeta,
@@ -33,6 +37,7 @@ import {
   listMods,
   loadAccounts,
   mergeVersionJson,
+  migrateLegacyData,
   pickRuntime,
   readOptionsTxt,
   refresh,
@@ -152,6 +157,12 @@ export interface NotifyPayload {
   body?: string
   kind: 'info' | 'success' | 'warning' | 'error'
   actions?: Array<{ id: string; label: string }>
+}
+
+/** 游戏根切换结果（不做热切换：重启启动器后生效）。 */
+export interface SetGameRootResult {
+  gameRoot: string
+  requiresRestart: boolean
 }
 
 /** 账号列表项（多账户切换用；id = uuid 优先、离线回退玩家名）。 */
@@ -319,6 +330,8 @@ export class LauncherService {
       if (patch.downloadSource !== 'official' && patch.downloadSource !== 'bmclapi') {
         throw new Error('invalid download source')
       }
+      // 源偏好变更：作废内存清单缓存，下次拉取按新源顺序（版本 JSON 地址也随清单源变）
+      if (this.config.downloadSource !== patch.downloadSource) this.manifest = null
       this.config.downloadSource = patch.downloadSource
     }
     if (patch.ui !== undefined) {
@@ -327,6 +340,35 @@ export class LauncherService {
     }
     await this.persistConfig()
     return this.getConfigPayload()
+  }
+
+  /**
+   * 游戏根切换（下载页「新建 .minecraft 到 .mmcl」入口的实装）：校验可写 →
+   * 记忆 lastGameRoot → 补齐标准目录 → 遗留迁移幂等重跑（多为零操作）。
+   * 不做热切换：gameRoot 在构造期解析，写入需重启启动器生效。
+   */
+  async setGameRoot(path: string, legacyRoot?: string): Promise<SetGameRootResult> {
+    if (typeof path !== 'string' || path.trim().length === 0) throw new Error('invalid game root path')
+    const root = path.trim()
+    await assertDirWritable(root)
+    await ensureGameDirs(root)
+    this.config.lastGameRoot = root
+    await this.persistConfig()
+    if (legacyRoot) {
+      const migration = await migrateLegacyData({
+        legacyRoot,
+        mmclDir: this.dirs.mmclDir,
+        gameRoot: root,
+        configPath: this.configPath,
+        config: this.config
+      })
+      this.config = migration.config
+      for (const f of migration.report.failed) console.error('[mcl] 遗留数据迁移失败：', f.item, '→', f.error)
+      if (migration.report.moved.length > 0) {
+        console.log('[mcl] 游戏根切换迁移完成：', migration.report.moved.join('、'))
+      }
+    }
+    return { gameRoot: root, requiresRestart: true }
   }
 
   async getAccount(): Promise<Account | null> {
@@ -536,8 +578,12 @@ export class LauncherService {
 
   private async ensureManifest(): Promise<VersionManifest> {
     if (!this.manifest) {
-      // 官方 launchermeta 失败（校园网劫持/不可达）回退 BMCLAPI 镜像（M6，与库下载多源回退同思路）
-      this.manifest = await fetchVersionManifestWithFallback()
+      // 官方 launchermeta 失败（校园网劫持/不可达）回退 BMCLAPI 镜像（M6，与库下载多源回退同思路）。
+      // 下载源偏好为 bmclapi 时翻转主源顺序（用户在下载页引导通知里主动切换，不静默）
+      this.manifest =
+        this.config.downloadSource === 'bmclapi'
+          ? await fetchVersionManifestWithFallback(BMCLAPI_MANIFEST_URL, DEFAULT_MANIFEST_URL)
+          : await fetchVersionManifestWithFallback()
     }
     return this.manifest
   }
@@ -612,7 +658,17 @@ export class LauncherService {
       const cancelled = controller.signal.aborted
       const message = cancelled ? '安装已取消' : (err as Error).message
       this.send('event:install-done', { id, ok: false, error: message })
-      if (!cancelled) this.notify({ kind: 'error', title: `版本 ${id} 安装失败`, body: message })
+      if (!cancelled) {
+        // 官方源失败 → 通知带「转用 BMCLAPI 镜像」动作（用户点击才改偏好，不静默切换）
+        this.notify({
+          kind: 'error',
+          title: `版本 ${id} 安装失败`,
+          body: message,
+          ...(this.config.downloadSource === 'bmclapi'
+            ? {}
+            : { actions: [{ id: 'switch-bmclapi', label: '转用 BMCLAPI 镜像' }] })
+        })
+      }
       throw cancelled ? new Error('安装已取消') : err
     } finally {
       this.installing = false

@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import type { OpenDialogOptions } from 'electron'
 import { promises as fs, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import os from 'node:os'
@@ -243,6 +244,21 @@ function registerIpc(service: LauncherService): void {
   ipcMain.handle('config:setOptions', (_e, instanceId: string, entries: Record<string, string>) => {
     if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     return service.writeGameOptions(instanceId, entries)
+  })
+
+  // UI 重构 C6：系统原生目录选择（游戏根；C7 自定义背景另走文件选择）+ 游戏根切换（重启生效）
+  ipcMain.handle('dialog:pick-directory', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const options: OpenDialogOptions = {
+      title: '选择游戏根目录（.minecraft）',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+  })
+  ipcMain.handle('gameRoot:set', (_e, path: string) => {
+    if (typeof path !== 'string' || path.length === 0) throw new Error('invalid game root path')
+    return service.setGameRoot(path, app.getPath('userData'))
   })
 }
 

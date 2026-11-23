@@ -40,14 +40,20 @@ export function useJava(
       setMessage('运行时下载已取消（.part 已下部分保留，重下时续传）')
     })
 
+  /** 下载任意内置运行时（下载页列表用；进度同时进任务列表与页面内联条）。 */
+  const installRuntimeMajor = (major: number) =>
+    run(async () => {
+      setMessage('')
+      await window.mcl.installRuntime(major)
+      setJavaDl(null)
+      window.mcl.listRuntimes().then(setRuntimes)
+    })
+
   const onInstallRuntime = () =>
     run(async () => {
       if (needJavaMajor === null) return
-      setMessage('')
-      await window.mcl.installRuntime(needJavaMajor)
-      setJavaDl(null)
+      await installRuntimeMajor(needJavaMajor)
       setNeedJavaMajor(null)
-      window.mcl.listRuntimes().then(setRuntimes)
       setMessage(`Java ${needJavaMajor} 内置运行时已就绪，请再点一次启动`)
     })
 
@@ -59,6 +65,7 @@ export function useJava(
     javaDl,
     onSaveJava,
     onCancelRuntime,
+    installRuntimeMajor,
     onInstallRuntime
   }
 }

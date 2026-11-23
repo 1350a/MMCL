@@ -13,11 +13,13 @@ import { GameLogDialog } from './components/dialogs/GameLogDialog'
 import { VersionSettingsDialog } from './components/dialogs/VersionSettingsDialog'
 import { NewInstanceDialog } from './components/dialogs/NewInstanceDialog'
 import { PlaceholderPage } from './components/pages/PlaceholderPage'
+import { DownloadPage } from './components/pages/DownloadPage'
 import { NavigationProvider, useNavigation } from './state/AppState'
 import { useAccounts } from './hooks/useAccounts'
 import { useAi } from './hooks/useAi'
 import { useExtensions } from './hooks/useExtensions'
 import { useGame } from './hooks/useGame'
+import { useGameRoot } from './hooks/useGameRoot'
 import { useInstances } from './hooks/useInstances'
 import { useJava } from './hooks/useJava'
 import { useMods } from './hooks/useMods'
@@ -54,6 +56,7 @@ function LauncherShell() {
   const ai = useAi(run, setMessage, mods.refreshMods)
   const ext = useExtensions(run, setMessage)
   const tasks = useTasks()
+  const gameRoot = useGameRoot(run, tasks.pushToast)
 
   const [loginOpen, setLoginOpen] = useState(false)
   const [versionSettingsFor, setVersionSettingsFor] = useState<InstanceMetaPayload | null>(null)
@@ -86,6 +89,17 @@ function LauncherShell() {
   const handleAction = (toast: ToastItem, actionId: string): void => {
     if (actionId === 'open-log') setLogOpen(true)
     else if (actionId === 'install-runtime') java.onInstallRuntime()
+    else if (actionId === 'switch-bmclapi') {
+      // 官方源失败引导（§7）：点击才改偏好，不静默切换；下次安装优先用镜像清单
+      void run(async () => {
+        await window.mcl.setConfig({ downloadSource: 'bmclapi' })
+        tasks.pushToast({
+          kind: 'success',
+          title: '已切换到 BMCLAPI 镜像',
+          body: '下次安装版本时优先从镜像获取清单（库下载本就有镜像回退）'
+        })
+      })
+    }
     tasks.dismissToast(toast.id)
   }
 
@@ -145,7 +159,15 @@ function LauncherShell() {
           <TitleBar />
           <div className="page-area">
             {page === 'home' && <HomeCanvas ai={ai} onNavigateSettings={() => navigate('settings')} />}
-            {page === 'download' && <PlaceholderPage title="下载" note="版本 / Java / Mod 管理将在下一步接入（C6）" />}
+            {page === 'download' && (
+              <DownloadPage
+                versions={versions}
+                mods={mods}
+                java={java}
+                instances={instances}
+                gameRoot={gameRoot}
+              />
+            )}
             {page === 'extensions' && <PlaceholderPage title="插件" note="扩展审核与管理将在 C8 接入" />}
             {page === 'settings' && <PlaceholderPage title="设置" note="外观 / 版本与隔离 / Java / 网络 / 通用将在 C7 接入" />}
           </div>
