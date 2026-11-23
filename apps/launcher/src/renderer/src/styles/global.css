@@ -18,7 +18,7 @@
 
   body {
     font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-    background: #05070d; /* 背景图（80% 不透明度）之下的暗色基底 */
+    background: var(--mcl-bg-base); /* 白化幕之下的浅色基底 */
     color: var(--mcl-text);
     -webkit-font-smoothing: antialiased;
   }

@@ -22,20 +22,23 @@ export function useInstances(run: Run, setMessage: (m: string) => void) {
 
   const selectedMeta = instances.find((i) => i.id === selectedInstance)
 
-  const onCreateInstance = () =>
+  /** 创建版本条目（新建弹窗用；创建后选中新条目）。 */
+  const onCreateInstanceWith = (name: string, versionId?: string): Promise<void> =>
     run(async () => {
-      const name = newInstName.trim()
-      if (!name) return
-      const created = await window.mcl.createInstance({
-        name,
-        ...(newInstVersion ? { versionId: newInstVersion } : {})
-      })
-      setNewInstName('')
-      setNewInstVersion('')
+      const created = await window.mcl.createInstance({ name, ...(versionId ? { versionId } : {}) })
       setSelectedInstance(created.id)
       refreshInstances()
       setMessage('')
     })
+
+  const onCreateInstance = () => {
+    const name = newInstName.trim()
+    if (!name) return
+    void onCreateInstanceWith(name, newInstVersion || undefined).then(() => {
+      setNewInstName('')
+      setNewInstVersion('')
+    })
+  }
 
   const onDeleteInstance = () =>
     run(async () => {
@@ -58,6 +61,7 @@ export function useInstances(run: Run, setMessage: (m: string) => void) {
     refreshInstances,
     selectedMeta,
     onCreateInstance,
+    onCreateInstanceWith,
     onDeleteInstance
   }
 }

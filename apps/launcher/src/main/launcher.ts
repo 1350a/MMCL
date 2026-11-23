@@ -1,5 +1,6 @@
 import { promises as fs, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type { ChildProcess } from 'node:child_process'
 import {
   assembleLaunch,
@@ -8,6 +9,7 @@ import {
   BMCLAPI_MAVEN_BASE,
   createInstance,
   deleteInstance,
+  deleteVersionArtifacts,
   detectJava,
   ensureAuthlibInjector,
   ensureDefaultInstance,
@@ -37,6 +39,7 @@ import {
   removeMod,
   resolveApiRoot,
   resolveInstalledVersion,
+  resolveIsolation,
   saveAccounts,
   saveConfig,
   updateInstance,
@@ -48,6 +51,7 @@ import type {
   Account,
   AuthenticateResponse,
   InstanceMeta,
+  IsolationStrategy,
   JavaAgentOptions,
   ModFileInfo,
   MmclConfig,
@@ -141,6 +145,26 @@ export interface ConfigPatchPayload {
   ui?: UiPrefs
 }
 
+/** 右下角通知（UI-DESIGN.md §6）：动作按钮由渲染层按 id 分发。 */
+export interface NotifyPayload {
+  id: string
+  title: string
+  body?: string
+  kind: 'info' | 'success' | 'warning' | 'error'
+  actions?: Array<{ id: string; label: string }>
+}
+
+/** 账号列表项（多账户切换用；id = uuid 优先、离线回退玩家名）。 */
+export type AccountListItemPayload = AccountPayload & { id: string }
+
+/** 删除版本条目结果（渲染层据实告知：数据是否随删、本体是否清理）。 */
+export interface DeleteInstanceResult {
+  /** 有效隔离开启 = 实例目录即数据目录（mods/存档随删）。 */
+  dataDeleted: boolean
+  /** 版本本体无引用且开关开 = versions/<id> 已清理。 */
+  versionCleaned: boolean
+}
+
 /** 启动器运行时状态与编排：IPC 路由层只调用这里的方法。 */
 export class LauncherService {
   private manifest: VersionManifest | null = null
@@ -208,6 +232,11 @@ export class LauncherService {
             console.error('[extensions] 注册失败', ext.manifest.id, '→', err)
           }
         }
+        this.notify({
+          kind: errors.length > 0 ? 'warning' : 'success',
+          title: `扩展装载完成（${loaded.length} 个）`,
+          ...(errors.length > 0 ? { body: `${errors.length} 个扩展装载失败，详见日志` } : {})
+        })
       })
       .catch((err) => console.error('[components] 沙箱扩展装载失败：', err))
   }
@@ -215,6 +244,11 @@ export class LauncherService {
   /** 配置落盘（内存态 → mmcl.json；调用方先改 this.config 再调这里）。 */
   private async persistConfig(): Promise<void> {
     await saveConfig(this.configPath, this.config)
+  }
+
+  /** 推送右下角通知（UI-DESIGN.md §6；动作按钮由渲染层按 id 分发）。 */
+  private notify(payload: Omit<NotifyPayload, 'id'>): void {
+    this.send('event:notify', { id: randomUUID(), ...payload })
   }
 
   async getSettings(): Promise<SettingsPayload> {
@@ -311,13 +345,55 @@ export class LauncherService {
     return account
   }
 
-  /** 保存离线账户（单玩家 MVP：覆盖式单账户）。 */
+  /** 账户标识：yggdrasil 用 uuid，offline 用玩家名（M1 时代离线 uuid 可能为空）。 */
+  private accountId(a: Account): string {
+    return a.uuid || a.name
+  }
+
+  /** 账号列表（多账户；当前账户恒排首，与 loadAccounts 顺序一致）。 */
+  async listAccountsPayload(): Promise<AccountListItemPayload[]> {
+    const accounts = await loadAccounts(this.dirs.mmclDir)
+    return accounts.map((a) => ({ ...this.toPayload(a), id: this.accountId(a) }))
+  }
+
+  /** 保存离线账号（同名覆盖并置首 = 添加/切换为当前）。 */
   async saveAccount(name: string): Promise<OfflineAccount> {
     if (typeof name !== 'string') throw new Error('invalid account name')
     validatePlayerName(name)
     const account: OfflineAccount = { kind: 'offline', name, uuid: '' }
-    await saveAccounts(this.dirs.mmclDir, [account])
-    return { kind: 'offline', name, uuid: '' }
+    const rest = (await loadAccounts(this.dirs.mmclDir)).filter((a) => !(a.kind === 'offline' && a.name === name))
+    await saveAccounts(this.dirs.mmclDir, [account, ...rest])
+    this.send('event:account-changed', this.toPayload(account))
+    return account
+  }
+
+  /** 切换当前账号（移到列表首位）。 */
+  async switchAccount(id: string): Promise<AccountPayload | null> {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('invalid account id')
+    const accounts = await loadAccounts(this.dirs.mmclDir)
+    const index = accounts.findIndex((a) => this.accountId(a) === id)
+    if (index < 0) throw new Error(`账号不存在：${id}`)
+    const [picked] = accounts.splice(index, 1)
+    await saveAccounts(this.dirs.mmclDir, [picked, ...accounts])
+    this.send('event:account-changed', this.toPayload(picked))
+    return this.toPayload(picked)
+  }
+
+  /** 删除账号（外置账号先尽力吊销 token；删除当前账号时下一位顺位顶上）。 */
+  async deleteAccount(id: string): Promise<void> {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('invalid account id')
+    const accounts = await loadAccounts(this.dirs.mmclDir)
+    const removed = accounts.find((a) => this.accountId(a) === id)
+    if (!removed) throw new Error(`账号不存在：${id}`)
+    if (removed.kind === 'yggdrasil') {
+      await invalidate(removed.apiRoot, {
+        accessToken: removed.accessToken,
+        clientToken: removed.clientToken
+      }).catch(() => undefined)
+    }
+    const rest = accounts.filter((a) => this.accountId(a) !== id)
+    await saveAccounts(this.dirs.mmclDir, rest)
+    this.send('event:account-changed', rest[0] ? this.toPayload(rest[0]) : null)
   }
 
   // ---- 外置登录（M3：authlib-injector / Yggdrasil）----
@@ -392,7 +468,9 @@ export class LauncherService {
       clientToken: auth.clientToken,
       ...(serverName ? { serverName } : {})
     }
-    await saveAccounts(this.dirs.mmclDir, [account])
+    // 多账户：同 uuid 覆盖（重登）或追加，并置首为当前账号
+    const rest = (await loadAccounts(this.dirs.mmclDir)).filter((a) => !(a.kind === 'yggdrasil' && a.uuid === account.uuid))
+    await saveAccounts(this.dirs.mmclDir, [account, ...rest])
     this.send('event:account-changed', this.toPayload(account))
   }
 
@@ -529,10 +607,12 @@ export class LauncherService {
         libraryAltBaseUrls: [BMCLAPI_MAVEN_BASE]
       })
       this.send('event:install-done', { id, ok: true })
+      this.notify({ kind: 'success', title: `版本 ${id} 安装完成` })
     } catch (err) {
       const cancelled = controller.signal.aborted
       const message = cancelled ? '安装已取消' : (err as Error).message
       this.send('event:install-done', { id, ok: false, error: message })
+      if (!cancelled) this.notify({ kind: 'error', title: `版本 ${id} 安装失败`, body: message })
       throw cancelled ? new Error('安装已取消') : err
     } finally {
       this.installing = false
@@ -545,9 +625,40 @@ export class LauncherService {
     this.installAbort?.abort()
   }
 
-  /** 实例目录（mods/options.txt/saves/logs 都在这里，随游戏根走）。 */
+  /** 实例目录（元数据恒在此；数据目录是否等同它取决于有效隔离）。 */
   private instanceDirFor(instanceId: string): string {
     return join(this.dirs.gameRoot, 'instances', instanceId)
+  }
+
+  /** 判定加载器（M4：fabric 子版本 id 含 fabric-loader；未来加载器在此扩展）。 */
+  private static isModVersion(versionId: string | undefined): boolean {
+    return typeof versionId === 'string' && versionId.includes('fabric-loader')
+  }
+
+  /** 有效隔离判定（§3）：每版本覆盖 → 全局策略；清单不可达按 release 处理。 */
+  private async effectiveIsolation(instance: InstanceMeta): Promise<boolean> {
+    let isSnapshot = false
+    if (instance.versionId) {
+      try {
+        const manifest = await this.ensureManifest()
+        isSnapshot = findVersionEntry(manifest, instance.versionId)?.type === 'snapshot'
+      } catch {
+        // 清单不可达：按 release 处理（mod 版仍按加载器判定）
+      }
+    }
+    return resolveIsolation({
+      perVersion: instance.isolation,
+      globalStrategy: this.config.isolationStrategy ?? 'all',
+      isSnapshot,
+      isMod: LauncherService.isModVersion(instance.versionId)
+    })
+  }
+
+  /** 实例数据目录（mods/options/saves 跟随有效隔离）：开=版本文件夹，关=游戏根。 */
+  private async dataDirFor(instanceId: string): Promise<string> {
+    const instance = await getInstance(this.dirs.gameRoot, instanceId)
+    const isolationOn = await this.effectiveIsolation(instance)
+    return isolationOn ? this.instanceDirFor(instanceId) : this.dirs.gameRoot
   }
 
   // ---- 多实例（M6，DESIGN.md §5.7）----
@@ -584,16 +695,45 @@ export class LauncherService {
     return updateInstance(this.dirs.gameRoot, instanceId, { versionId })
   }
 
+  /** 更新实例元数据（UI 术语「版本」：重命名 / 每版本隔离策略）。 */
+  async updateInstancePayload(
+    instanceId: string,
+    patch: { name?: string; isolation?: IsolationStrategy | 'follow' }
+  ): Promise<InstanceMeta> {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    if (typeof patch !== 'object' || patch === null) throw new Error('invalid instance patch')
+    await this.instanceReady
+    return updateInstance(this.dirs.gameRoot, instanceId, patch)
+  }
+
   /**
-   * 删除实例（整个实例目录不可逆删除，UI 侧确认弹窗把关）。
-   * 游戏运行中一律拒绝（单游戏约束，避免删到正在运行的 gameDir）；
-   * 删除 main 后下次启动 ensureDefaultInstance 会重建空 main。
+   * 删除版本条目（UI 侧确认弹窗把关；游戏运行中一律拒绝）。
+   * 语义（UI-DESIGN.md §3）：有效隔离开 = 实例目录即数据目录（mods/存档随删，确认弹窗②）；
+   * 关 = 数据在根 .minecraft 不受影响（仅删条目，弹窗告知）。
+   * 版本本体无引用且自动清理开关开（默认开）→ versions/<id> 一并清理。
    * 刻意不提供 AI 工具入口：AI 触发存档删除是脚枪。
    */
-  async deleteInstancePayload(instanceId: string): Promise<void> {
+  async deleteInstancePayload(instanceId: string): Promise<DeleteInstanceResult> {
     if (this.game) throw new Error('游戏正在运行，请先停止再删除实例')
     await this.instanceReady
+    const meta = await getInstance(this.dirs.gameRoot, instanceId)
+    const dataDir = await this.dataDirFor(instanceId)
+    const dataDeleted = dataDir === this.instanceDirFor(instanceId)
     await deleteInstance(this.dirs.gameRoot, instanceId)
+    let versionCleaned = false
+    if (meta.versionId && this.config.autoCleanupVersions !== false) {
+      const rest = await listInstances(this.dirs.gameRoot)
+      if (!rest.some((i) => i.versionId === meta.versionId)) {
+        await deleteVersionArtifacts(this.dirs.gameRoot, meta.versionId)
+        versionCleaned = true
+        this.notify({
+          kind: 'info',
+          title: `版本本体已自动清理（${meta.versionId}）`,
+          body: '已无其他版本引用；设置页可关闭自动清理'
+        })
+      }
+    }
+    return { dataDeleted, versionCleaned }
   }
 
   /** 断言版本已安装（绑定版本时的即时反馈，避免启动时才发现绑错）。 */
@@ -618,6 +758,11 @@ export class LauncherService {
     const resolved = await resolveInstalledVersion(this.dirs.gameRoot, id)
     const versionJson = resolved.json
 
+    // 有效隔离（UI-DESIGN.md §3）：每版本覆盖 → 全局策略；判定材料 = 版本类型 + 加载器
+    const isolationOn = await this.effectiveIsolation(instance)
+    this.config.lastVersionId = id
+    await this.persistConfig()
+
     // 外置登录：先走凭据链（validate → refresh → 重登提示），再备齐 authlib-injector jar 与预取元数据
     let javaAgent: JavaAgentOptions | undefined
     if (account.kind === 'yggdrasil') {
@@ -634,7 +779,8 @@ export class LauncherService {
     const spec = assembleLaunch(versionJson, {
       javaPath: java.path,
       account,
-      gameDir: this.instanceDirFor(instanceId),
+      // 隔离开 = 版本文件夹（数据随版本）；关 = 根 .minecraft（saves/mods 全局共享）
+      gameDir: isolationOn ? this.instanceDirFor(instanceId) : this.dirs.gameRoot,
       rootDir: this.dirs.gameRoot,
       launcherName: 'MCL',
       launcherVersion: '0.1.0',
@@ -660,6 +806,12 @@ export class LauncherService {
           .runAfterExit({ versionId: id, code })
           .catch((err) => console.error('[hooks] 退出钩子执行失败：', err))
         this.send('event:game-exit', { code })
+        this.notify({
+          kind: code === 0 ? 'success' : 'warning',
+          title: code === 0 ? '游戏已退出' : `游戏异常退出（退出码 ${code}）`,
+          ...(code === 0 ? {} : { body: '崩溃日志可在日志面板查看' }),
+          actions: [{ id: 'open-log', label: '打开日志' }]
+        })
       },
       onError: (err) => this.send('event:game-log', { line: `进程错误: ${err.message}`, source: 'stderr' })
     })
@@ -709,6 +861,7 @@ export class LauncherService {
         onProgress: (p) => this.send('event:java-install-progress', p),
         signal: controller.signal
       })
+      this.notify({ kind: 'success', title: `Java ${major} 内置运行时就绪` })
       return info
     } catch (err) {
       throw controller.signal.aborted ? new Error('运行时下载已取消') : err
@@ -745,12 +898,14 @@ export class LauncherService {
         signal: controller.signal
       })
       this.send('event:install-done', { id: result.versionId, ok: true })
+      this.notify({ kind: 'success', title: `Fabric 安装完成（${result.versionId}）` })
       return { versionId: result.versionId }
     } catch (err) {
       const cancelled = controller.signal.aborted
       const message = cancelled ? '安装已取消' : (err as Error).message
       // 失败时拿不到确定的 fabric id，用占位 id 只为 UI 展示错误
       this.send('event:install-done', { id: `fabric-loader-?-${gameVersion}`, ok: false, error: message })
+      if (!cancelled) this.notify({ kind: 'error', title: `Fabric 安装失败（${gameVersion}）`, body: message })
       throw cancelled ? new Error('安装已取消') : err
     } finally {
       this.installing = false
@@ -759,29 +914,29 @@ export class LauncherService {
   }
 
   listModsPayload(instanceId: string): Promise<ModFileInfo[]> {
-    return listMods(this.instanceDirFor(instanceId))
+    return this.dataDirFor(instanceId).then((dir) => listMods(dir))
   }
 
   removeModFile(instanceId: string, filename: string): Promise<void> {
     if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (typeof filename !== 'string') throw new Error('invalid mod filename')
-    return removeMod(this.instanceDirFor(instanceId), filename)
+    return this.dataDirFor(instanceId).then((dir) => removeMod(dir, filename))
   }
 
   installModFromLocal(instanceId: string, jarPath: string): Promise<string> {
     if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (typeof jarPath !== 'string') throw new Error('invalid mod path')
-    return installLocalMod(this.instanceDirFor(instanceId), jarPath)
+    return this.dataDirFor(instanceId).then((dir) => installLocalMod(dir, jarPath))
   }
 
   readGameOptions(instanceId: string): Promise<Array<{ key: string; value: string }>> {
-    return readOptionsTxt(this.instanceDirFor(instanceId))
+    return this.dataDirFor(instanceId).then((dir) => readOptionsTxt(dir))
   }
 
   writeGameOptions(instanceId: string, entries: Record<string, string>): Promise<Array<{ key: string; value: string }>> {
     if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (typeof entries !== 'object' || entries === null) throw new Error('invalid options entries')
-    return writeOptionsTxt(this.instanceDirFor(instanceId), entries)
+    return this.dataDirFor(instanceId).then((dir) => writeOptionsTxt(dir, entries))
   }
 
   stopGame(): void {

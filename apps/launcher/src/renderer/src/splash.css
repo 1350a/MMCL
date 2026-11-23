@@ -1,6 +1,6 @@
-/* Splash 页样式（独立入口，不走 @layer；背景与主页同源） */
+/* Splash 页样式（独立入口，不走 @layer；浅色主题与主页同源） */
 body {
-  background: #05070d;
+  background: var(--mcl-bg-base);
   overflow: hidden;
   user-select: none;
 }
@@ -35,7 +35,7 @@ body {
   width: 240px;
   height: 4px;
   border-radius: var(--mcl-radius-pill);
-  background: var(--mcl-glass-deep);
+  background: rgba(28, 38, 66, 0.1);
   overflow: hidden;
   margin-top: 14px;
 }

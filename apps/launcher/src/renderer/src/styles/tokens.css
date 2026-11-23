@@ -1,35 +1,40 @@
 /*
  * 设计令牌（UI-DESIGN.md §8）。
- * 色板锚定默认背景图（暗夜 MC 场景）：深蓝黑基底 + 靛蓝主色（非纯蓝）+
- * 琥珀强调（火把）+ AI 紫 + 草绿成功，多色系。
+ * 浅色主题（2026-11-23 验收定版）：默认背景图偏暗，上面叠白化图层（变淡变白）
+ * 后搭配浅色界面——文字深色、表面白色半透明玻璃。多色系：靛蓝主色（非纯蓝）+
+ * 琥珀强调（火把）+ AI 紫 + 草绿成功。
  */
 :root {
-  /* 主色与功能色 */
-  --mcl-primary: hsl(222 78% 62%); /* 靛蓝，略偏紫 */
-  --mcl-cyan: hsl(190 75% 52%); /* 渐变搭档 */
-  --mcl-accent: hsl(36 90% 60%); /* 琥珀（火把） */
-  --mcl-ai: hsl(262 70% 64%); /* AI 紫 */
-  --mcl-success: hsl(105 55% 55%);
-  --mcl-warning: hsl(38 92% 55%);
-  --mcl-danger: hsl(354 75% 60%);
+  /* 主色与功能色（浅底可比深底略深一档保对比度） */
+  --mcl-primary: hsl(223 72% 56%); /* 靛蓝，略偏紫 */
+  --mcl-cyan: hsl(192 80% 42%); /* 渐变搭档 */
+  --mcl-accent: hsl(32 92% 52%); /* 琥珀（火把） */
+  --mcl-ai: hsl(262 65% 58%); /* AI 紫 */
+  --mcl-success: hsl(112 55% 40%);
+  --mcl-warning: hsl(35 95% 46%);
+  --mcl-danger: hsl(354 72% 50%);
 
-  /* 渐变语言：主操作 indigo→cyan；AI 元素 violet→indigo；启动按钮 amber→orange（C5 接线） */
+  /* 渐变语言：主操作 indigo→cyan；AI 元素 violet→indigo；启动按钮 amber→orange */
   --mcl-gradient-primary: linear-gradient(135deg, var(--mcl-primary), var(--mcl-cyan));
   --mcl-gradient-ai: linear-gradient(135deg, var(--mcl-ai), var(--mcl-primary));
-  --mcl-gradient-launch: linear-gradient(135deg, var(--mcl-accent), hsl(24 92% 58%));
+  --mcl-gradient-launch: linear-gradient(135deg, var(--mcl-accent), hsl(22 92% 50%));
 
-  /* 表面：深色玻璃（侧栏另用更深一档，见 layout 批） */
-  --mcl-glass: rgba(13, 18, 32, 0.62);
-  --mcl-glass-deep: rgba(8, 11, 20, 0.72);
-  --mcl-glass-sidebar: rgba(10, 14, 26, 0.66);
-  --mcl-border: rgba(120, 150, 220, 0.14);
-  --mcl-border-strong: rgba(120, 150, 220, 0.26);
+  /* 背景图层：图上叠白化幕（变淡变白），基底衬浅色 */
+  --mcl-bg-base: #eef0f6;
+  --mcl-bg-wash: rgba(255, 255, 255, 0.58);
+
+  /* 表面：浅色玻璃（侧栏/底栏略深一档保层次） */
+  --mcl-glass: rgba(255, 255, 255, 0.6);
+  --mcl-glass-deep: rgba(255, 255, 255, 0.72);
+  --mcl-glass-sidebar: rgba(255, 255, 255, 0.66);
+  --mcl-border: rgba(28, 38, 66, 0.12);
+  --mcl-border-strong: rgba(28, 38, 66, 0.22);
   --mcl-blur: 14px;
 
   /* 文字三级 */
-  --mcl-text: hsl(220 30% 92%);
-  --mcl-text-secondary: hsl(220 18% 68%);
-  --mcl-text-muted: hsl(220 14% 48%);
+  --mcl-text: hsl(224 28% 16%);
+  --mcl-text-secondary: hsl(224 16% 34%);
+  --mcl-text-muted: hsl(224 12% 52%);
 
   /* 间距 */
   --mcl-space-1: 4px;
@@ -54,10 +59,10 @@
   --mcl-font-md: 15px;
   --mcl-font-lg: 28px;
 
-  /* 动效（活泼弹性档） */
+  /* 动效（活泼弹性档）：入场有过冲，退场统一 ease-out */
   --mcl-dur-fast: 180ms;
   --mcl-dur-base: 320ms;
   --mcl-dur-slow: 450ms;
-  --mcl-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* 入场/展开：过冲弹性 */
-  --mcl-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1); /* 退场 */
+  --mcl-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --mcl-ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
 }

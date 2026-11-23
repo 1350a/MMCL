@@ -1,5 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
+import { isIsolationStrategy } from './isolation'
+import type { IsolationStrategy } from './isolation'
 
 /**
  * 游戏实例注册表（M6 多实例，DESIGN.md §5.7）。
@@ -23,6 +25,8 @@ export interface InstanceMeta {
   name: string
   /** 实例绑定的已安装版本 id；未设置 = 待用户/AI 指定。 */
   versionId?: string
+  /** 版本隔离（UI 术语「每版本策略」）：缺省 = 跟随全局。 */
+  isolation?: IsolationStrategy | 'follow'
   createdAt?: string
 }
 
@@ -43,6 +47,13 @@ function parseInstanceMeta(json: unknown, dirName: string): InstanceMeta {
   if (m.versionId !== undefined && (typeof m.versionId !== 'string' || m.versionId.length === 0)) {
     throw new Error('instance.json 的 versionId 需为非空字符串')
   }
+  if (
+    m.isolation !== undefined &&
+    m.isolation !== 'follow' &&
+    !isIsolationStrategy(m.isolation)
+  ) {
+    throw new Error('instance.json 的 isolation 需为 follow 或五档策略之一')
+  }
   if (m.createdAt !== undefined && typeof m.createdAt !== 'string') {
     throw new Error('instance.json 的 createdAt 需为字符串')
   }
@@ -50,6 +61,7 @@ function parseInstanceMeta(json: unknown, dirName: string): InstanceMeta {
     id: m.id,
     name: m.name,
     ...(m.versionId === undefined ? {} : { versionId: m.versionId }),
+    ...(m.isolation === undefined ? {} : { isolation: m.isolation as IsolationStrategy | 'follow' }),
     ...(m.createdAt === undefined ? {} : { createdAt: m.createdAt })
   }
 }
@@ -137,11 +149,11 @@ export async function createInstance(
   return meta
 }
 
-/** 更新实例元数据（name / versionId 绑定）；未设置的键保持不变。 */
+/** 更新实例元数据（name / versionId 绑定 / 隔离策略）；未设置的键保持不变。 */
 export async function updateInstance(
   rootDir: string,
   id: string,
-  patch: { name?: string; versionId?: string }
+  patch: { name?: string; versionId?: string; isolation?: IsolationStrategy | 'follow' }
 ): Promise<InstanceMeta> {
   const meta = await getInstance(rootDir, id)
   if (patch.name !== undefined) {
@@ -156,18 +168,34 @@ export async function updateInstance(
     }
     meta.versionId = patch.versionId
   }
+  if (patch.isolation !== undefined) {
+    if (patch.isolation !== 'follow' && !isIsolationStrategy(patch.isolation)) {
+      throw new Error('isolation 需为 follow 或五档策略之一')
+    }
+    meta.isolation = patch.isolation
+  }
   await writeInstanceMeta(join(rootDir, 'instances', id), meta)
   return meta
 }
 
 /**
- * 删除实例：整个实例目录（mods/存档/设置）不可逆删除。
+ * 删除实例：整个实例目录不可逆删除。隔离开启时该目录即数据目录（mods/存档/设置）；
+ * 隔离关闭时数据在根 .minecraft（不受影响），目录内只有元数据。
  * 危险操作——调用方负责确认（UI 确认弹窗；游戏运行中的守卫在 launcher 层）。
  */
 export async function deleteInstance(rootDir: string, id: string): Promise<void> {
   if (!isInstanceId(id)) throw new Error(`非法实例 id：${String(id)}`)
   await getInstance(rootDir, id) // 不存在即抛可读错误
   await fs.rm(join(rootDir, 'instances', id), { recursive: true, force: false })
+}
+
+/**
+ * 删除版本本体（versions/<id>/ 的 jar + 清单 + 标记），UI-DESIGN.md §3：
+ * 无任何版本引用时自动清理（设置可调）。调用方负责引用计数与开关判断。
+ */
+export async function deleteVersionArtifacts(rootDir: string, versionId: string): Promise<void> {
+  if (!isInstanceId(versionId)) throw new Error(`非法版本 id：${String(versionId)}`)
+  await fs.rm(join(rootDir, 'versions', versionId), { recursive: true, force: true })
 }
 
 /**

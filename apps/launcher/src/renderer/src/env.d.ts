@@ -62,12 +62,32 @@ interface GameExitPayload {
   code: number | null
 }
 
-// 游戏实例（M6 多实例）
+// 游戏实例（M6 多实例；C5 加每版本隔离策略）
 interface InstanceMetaPayload {
   id: string
   name: string
   versionId?: string
+  /** 缺省 = 跟随全局。 */
+  isolation?: 'follow' | 'all' | 'none' | 'snapshotOnly' | 'modOnly' | 'snapshotAndMod'
   createdAt?: string
+}
+
+/** 账号列表项（多账户切换；id = uuid 优先、离线回退玩家名）。 */
+type AccountListItemPayload = AccountPayload & { id: string }
+
+/** 删除版本条目结果（据实告知：数据是否随删、本体是否清理）。 */
+interface DeleteInstanceResultPayload {
+  dataDeleted: boolean
+  versionCleaned: boolean
+}
+
+/** 右下角通知（UI-DESIGN.md §6）；动作由渲染层按 id 分发。 */
+interface NotifyPayload {
+  id: string
+  title: string
+  body?: string
+  kind: 'info' | 'success' | 'warning' | 'error'
+  actions?: Array<{ id: string; label: string }>
 }
 
 type Unsubscribe = () => void
@@ -168,6 +188,8 @@ interface SubmitResultPayload {
 interface UiPrefsPayload {
   sidebarHidden?: boolean
   backgroundPath?: string
+  /** 禁用 AI（主页留白态）。 */
+  aiDisabled?: boolean
 }
 
 /** 全局配置（渲染层可见形态：AI key 只出掩码）。 */
@@ -210,6 +232,9 @@ interface MclApi {
   setConfig: (patch: ConfigPatchPayload) => Promise<ConfigPayload>
   getAccount: () => Promise<AccountPayload | null>
   saveAccount: (name: string) => Promise<OfflineAccountPayload>
+  listAccounts: () => Promise<AccountListItemPayload[]>
+  switchAccount: (id: string) => Promise<AccountPayload | null>
+  deleteAccount: (id: string) => Promise<void>
 
   yggdrasilLogin: (server: string, username: string, password: string) => Promise<YggdrasilLoginResult>
   selectProfile: (profileId: string) => Promise<void>
@@ -233,7 +258,8 @@ interface MclApi {
   listInstances: () => Promise<InstanceMetaPayload[]>
   createInstance: (input: { id?: string; name: string; versionId?: string }) => Promise<InstanceMetaPayload>
   setInstanceVersion: (instanceId: string, versionId: string) => Promise<InstanceMetaPayload>
-  deleteInstance: (instanceId: string) => Promise<void>
+  updateInstance: (instanceId: string, patch: { name?: string; isolation?: string }) => Promise<InstanceMetaPayload>
+  deleteInstance: (instanceId: string) => Promise<DeleteInstanceResultPayload>
 
   installFabric: (gameVersion: string, loaderVersion?: string) => Promise<{ versionId: string }>
   listMods: (instanceId: string) => Promise<ModFilePayload[]>
@@ -261,6 +287,7 @@ interface MclApi {
   splashContinue: () => Promise<void>
 
   onSplashProgress: (callback: (payload: SplashProgressPayload) => void) => Unsubscribe
+  onNotify: (callback: (payload: NotifyPayload) => void) => Unsubscribe
   onInstallProgress: (callback: (payload: InstallProgressPayload) => void) => Unsubscribe
   onInstallDone: (callback: (payload: InstallDonePayload) => void) => Unsubscribe
   onJavaInstallProgress: (callback: (payload: JavaInstallProgressPayload) => void) => Unsubscribe

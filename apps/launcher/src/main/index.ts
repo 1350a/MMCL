@@ -3,6 +3,7 @@ import { promises as fs, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import os from 'node:os'
 import { fileSha1 } from '@mcl/core'
+import type { IsolationStrategy } from '@mcl/core'
 import {
   defaultConfig,
   ensureGameDirs,
@@ -90,11 +91,11 @@ function createWindow(): Promise<void> {
     height: 720,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#05070d',
+    backgroundColor: '#eef0f6',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#0a0e1a', // 取默认背景图天空顶部近黑藏蓝，Win10 不赌透明色
-      symbolColor: '#dfe3ee',
+      color: '#f2f4f8', // 浅色主题顶栏条（2026-11-23 验收定版）
+      symbolColor: '#2a2f3a',
       height: 36
     },
     webPreferences: {
@@ -155,6 +156,10 @@ function registerIpc(service: LauncherService): void {
   ipcMain.handle('config:set', (_e, patch) => service.setConfig(patch))
   ipcMain.handle('account:get', () => service.getAccountPayload())
   ipcMain.handle('account:save', (_e, name: string) => service.saveAccount(name))
+  // UI 重构 C5：多账户（列表/切换/删除）
+  ipcMain.handle('account:list', () => service.listAccountsPayload())
+  ipcMain.handle('account:switch', (_e, id: string) => service.switchAccount(id))
+  ipcMain.handle('account:delete', (_e, id: string) => service.deleteAccount(id))
   // M3 外置登录（authlib-injector / Yggdrasil）
   ipcMain.handle('auth:yggdrasil-login', (_e, server: string, username: string, password: string) =>
     service.yggdrasilLogin(server, username, password)
@@ -180,6 +185,12 @@ function registerIpc(service: LauncherService): void {
   ipcMain.handle('instance:setVersion', (_e, instanceId: string, versionId: string) => {
     if (typeof instanceId !== 'string' || typeof versionId !== 'string') throw new Error('invalid instance params')
     return service.setInstanceVersion(instanceId, versionId)
+  })
+  // UI 重构 C5：版本设置（重命名 / 每版本隔离策略）
+  ipcMain.handle('instance:update', (_e, instanceId: string, patch: { name?: string; isolation?: string }) => {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    if (typeof patch !== 'object' || patch === null) throw new Error('invalid instance patch')
+    return service.updateInstancePayload(instanceId, patch as { name?: string; isolation?: IsolationStrategy | 'follow' })
   })
   ipcMain.handle('instance:delete', (_e, instanceId: string) => {
     if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')

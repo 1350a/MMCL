@@ -16,6 +16,14 @@ export type { GameRootResolution, GameRootSource } from './launcherPaths'
 export { migrateLegacyData } from './migrate'
 export type { LegacyMigrationReport } from './migrate'
 
+export {
+  ISOLATION_STRATEGIES,
+  isIsolationStrategy,
+  resolveIsolation,
+  strategyCovers
+} from './isolation'
+export type { IsolationFacts, IsolationStrategy } from './isolation'
+
 export { downloadFile, assertSafeRemoteUrl, fetchJsonWithRetry } from './download'
 export type { DownloadOptions } from './download'
 
@@ -85,6 +93,7 @@ export {
   DEFAULT_INSTANCE_ID,
   createInstance,
   deleteInstance,
+  deleteVersionArtifacts,
   ensureDefaultInstance,
   getInstance,
   isInstanceId,

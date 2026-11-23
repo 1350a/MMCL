@@ -24,6 +24,9 @@ const api = {
   }) => ipcRenderer.invoke('config:set', patch),
   getAccount: () => ipcRenderer.invoke('account:get'),
   saveAccount: (name: string) => ipcRenderer.invoke('account:save', name),
+  listAccounts: () => ipcRenderer.invoke('account:list'),
+  switchAccount: (id: string) => ipcRenderer.invoke('account:switch', id),
+  deleteAccount: (id: string) => ipcRenderer.invoke('account:delete', id),
 
   yggdrasilLogin: (server: string, username: string, password: string) =>
     ipcRenderer.invoke('auth:yggdrasil-login', server, username, password),
@@ -50,6 +53,8 @@ const api = {
     ipcRenderer.invoke('instance:create', input),
   setInstanceVersion: (instanceId: string, versionId: string) =>
     ipcRenderer.invoke('instance:setVersion', instanceId, versionId),
+  updateInstance: (instanceId: string, patch: { name?: string; isolation?: string }) =>
+    ipcRenderer.invoke('instance:update', instanceId, patch),
   deleteInstance: (instanceId: string) => ipcRenderer.invoke('instance:delete', instanceId),
 
   installFabric: (gameVersion: string, loaderVersion?: string) =>
@@ -82,6 +87,7 @@ const api = {
   splashContinue: () => ipcRenderer.invoke('splash:continue'),
 
   onSplashProgress: on('splash:progress'),
+  onNotify: on('event:notify'),
   onInstallProgress: on('event:install-progress'),
   onInstallDone: on('event:install-done'),
   onJavaInstallProgress: on('event:java-install-progress'),

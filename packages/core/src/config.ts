@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import type { IsolationStrategy } from './isolation'
 
 /** AI 接入配置（明文存储于 mmcl.json，与旧 settings.json 一致）。 */
 export interface AiConfig {
@@ -16,10 +17,14 @@ export interface UiPrefs {
   sidebarHidden?: boolean
   /** 自定义背景图绝对路径（空/缺省用内置背景）。 */
   backgroundPath?: string
+  /** 禁用 AI（中心区留白态；引导面板「暂不使用」写入）。 */
+  aiDisabled?: boolean
 }
 
 /** 全局配置：.mmcl\mmcl.json（UI-DESIGN.md §3/§4）。 */
 export interface MmclConfig {
+  /** 版本隔离全局策略（五选，默认「全部开启」；每版本可覆盖）。 */
+  isolationStrategy?: IsolationStrategy
   /** 上次使用的游戏根（启动优先复用；目录消失则兜底新建）。 */
   lastGameRoot?: string
   /** 上次选中的版本本体 id（进主页恢复选择）。 */
@@ -43,6 +48,7 @@ export interface MmclConfig {
 /** 默认配置（损坏/缺失时以此重置）。 */
 export function defaultConfig(): MmclConfig {
   return {
+    isolationStrategy: 'all',
     updates: 'notify',
     autoCleanupVersions: true,
     downloadSource: 'official'

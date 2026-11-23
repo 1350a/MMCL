@@ -113,7 +113,7 @@ export function createSplashWindow(): BrowserWindow {
     resizable: false,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#05070d',
+    backgroundColor: '#eef0f6',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

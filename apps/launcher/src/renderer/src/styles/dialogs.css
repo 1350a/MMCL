@@ -1,0 +1,370 @@
+@layer dialogs {
+  /* ===== 应用内弹窗（UI-DESIGN.md §1：轻事务；玻璃面板 + 入场/退场动画） ===== */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 26, 40, 0.36);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    animation: overlay-in var(--mcl-dur-fast) var(--mcl-ease-out) both;
+  }
+
+  .modal-overlay.modal-closing {
+    animation: overlay-out var(--mcl-dur-fast) var(--mcl-ease-out) both;
+  }
+
+  .modal-overlay.modal-closing .modal-panel {
+    animation: panel-out var(--mcl-dur-fast) var(--mcl-ease-out) both;
+  }
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .modal-panel {
+    width: 520px;
+    max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 96px);
+    display: flex;
+    flex-direction: column;
+    background: var(--mcl-glass);
+    backdrop-filter: blur(var(--mcl-blur));
+    border: 1px solid var(--mcl-border-strong);
+    border-radius: var(--mcl-radius-lg);
+    padding: 18px 20px;
+    animation: panel-in var(--mcl-dur-base) var(--mcl-spring) both;
+  }
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateY(16px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes overlay-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes panel-out {
+    from {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(10px) scale(0.98);
+    }
+  }
+
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .modal-head h3 {
+    margin: 0;
+    font-size: var(--mcl-font-md);
+    color: var(--mcl-text);
+  }
+
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: var(--mcl-text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: var(--mcl-radius-sm);
+  }
+
+  .modal-close:hover {
+    color: var(--mcl-danger);
+  }
+
+  .modal-body {
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .dialog-text {
+    color: var(--mcl-text-secondary);
+    font-size: var(--mcl-font-base);
+    line-height: 1.6;
+    margin: 4px 0 12px;
+  }
+
+  .dialog-error-text {
+    color: var(--mcl-danger);
+    word-break: break-all;
+  }
+
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .dialog-actions button {
+    padding: 7px 16px;
+    border-radius: var(--mcl-radius-md);
+    border: 1px solid var(--mcl-border-strong);
+    background: var(--mcl-glass-deep);
+    color: var(--mcl-text);
+    font-size: var(--mcl-font-base);
+    cursor: pointer;
+    transition: all var(--mcl-dur-fast) var(--mcl-ease-out);
+  }
+
+  .dialog-actions button:hover {
+    border-color: var(--mcl-primary);
+    color: var(--mcl-primary);
+  }
+
+  .dialog-primary {
+    background: var(--mcl-gradient-primary) !important;
+    border: none !important;
+    color: #fff !important;
+  }
+
+  .dialog-primary:hover {
+    filter: brightness(1.08);
+    color: #fff !important;
+  }
+
+  .dialog-danger {
+    background: linear-gradient(135deg, var(--mcl-danger), hsl(8 80% 55%)) !important;
+    border: none !important;
+    color: #fff !important;
+  }
+
+  .dialog-danger:hover {
+    filter: brightness(1.08);
+    color: #fff !important;
+  }
+
+  .dialog-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .dialog-form-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .dialog-label {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+    margin-top: 4px;
+  }
+
+  .dialog-hint {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+    line-height: 1.5;
+  }
+
+  .dialog-log {
+    height: 320px;
+  }
+
+  .dialog-danger-zone {
+    margin-top: 12px;
+    border-top: 1px dashed var(--mcl-border);
+    padding-top: 10px;
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .dialog-danger-outline {
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--mcl-danger) 40%, transparent);
+    color: var(--mcl-danger);
+    font-size: var(--mcl-font-sm);
+    padding: 6px 14px;
+    border-radius: var(--mcl-radius-md);
+    cursor: pointer;
+    transition: all var(--mcl-dur-fast) var(--mcl-ease-out);
+  }
+
+  .dialog-danger-outline:hover {
+    background: color-mix(in srgb, var(--mcl-danger) 12%, transparent);
+  }
+
+  /* ===== 登录方式三选 ===== */
+  .login-methods {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .login-method {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 12px;
+    background: var(--mcl-glass-deep);
+    border: 1px solid var(--mcl-border-strong);
+    border-radius: var(--mcl-radius-md);
+    color: var(--mcl-text);
+    cursor: pointer;
+    transition: all var(--mcl-dur-fast) var(--mcl-ease-out);
+  }
+
+  .login-method:hover:not(:disabled) {
+    border-color: var(--mcl-primary);
+    transform: translateY(-1px);
+  }
+
+  .login-method:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .login-method span {
+    font-size: 10px;
+    color: var(--mcl-text-muted);
+  }
+
+  .login-method-active {
+    border-color: var(--mcl-primary) !important;
+    background: color-mix(in srgb, var(--mcl-primary) 12%, transparent) !important;
+  }
+}
+
+@layer ui {
+  /* ===== 右下角通知栈（§6） ===== */
+  .toast-stack {
+    position: fixed;
+    right: 16px;
+    bottom: 88px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 300;
+    width: 340px;
+  }
+
+  .toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    background: var(--mcl-glass);
+    backdrop-filter: blur(var(--mcl-blur));
+    border: 1px solid var(--mcl-border-strong);
+    border-left: 3px solid var(--mcl-primary);
+    border-radius: var(--mcl-radius-md);
+    padding: 10px 12px;
+    animation: toast-in var(--mcl-dur-base) var(--mcl-spring) both;
+  }
+
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .toast-info {
+    border-left-color: var(--mcl-primary);
+  }
+
+  .toast-success {
+    border-left-color: var(--mcl-success);
+  }
+
+  .toast-warning {
+    border-left-color: var(--mcl-warning);
+  }
+
+  .toast-error {
+    border-left-color: var(--mcl-danger);
+  }
+
+  /* 退场（滑出+淡出；200ms 后由组件真正移除） */
+  .toast-leaving {
+    animation: toast-out var(--mcl-dur-fast) var(--mcl-ease-out) both;
+  }
+
+  @keyframes toast-out {
+    from {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(24px);
+    }
+  }
+
+  .toast-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .toast-title {
+    font-size: var(--mcl-font-sm);
+    color: var(--mcl-text);
+    line-height: 1.4;
+  }
+
+  .toast-body {
+    font-size: var(--mcl-font-xs);
+    color: var(--mcl-text-muted);
+    margin-top: 3px;
+    word-break: break-all;
+    line-height: 1.4;
+  }
+
+  .toast-actions {
+    display: flex;
+    gap: 4px;
+    flex: none;
+  }
+
+  .toast-actions button {
+    background: transparent;
+    border: none;
+    color: var(--mcl-primary);
+    font-size: var(--mcl-font-xs);
+    padding: 3px 6px;
+    border-radius: var(--mcl-radius-sm);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .toast-actions button:hover {
+    background: rgba(28, 38, 66, 0.07);
+  }
+
+  .toast-close {
+    color: var(--mcl-text-muted) !important;
+  }
+}
