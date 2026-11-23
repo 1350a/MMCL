@@ -158,6 +158,28 @@ describe('ExtensionPipeline.approve / reject', () => {
     expect(events.some((e) => e.channel === 'event:ext-pending' && e.payload === null)).toBe(true)
   })
 
+  it('并发初始化两个沙箱扩展：asyncify 单挂起约束下都能激活（回归：Already suspended）', async () => {
+    const { pipeline, host } = await makeScope('concurrent-init')
+    const code = (toolName: string) => `export async function activate(ctx) {
+  ctx.capabilities['ai.tools'].registerTool({
+    name: '${toolName}', description: 'd',
+    parameters: { type: 'object', properties: {} },
+    handler() { return '{}' }
+  })
+  ctx.capabilities['ui.panel'].mountPanel(
+    { title: '${toolName}', items: [{ type: 'text', content: 'hi' }] },
+    function () {}
+  )
+}`
+    // 两次 approve 背靠背：a1 的沙箱初始化是 fire-and-forget，a2 的初始化与之并发
+    await pipeline.submit({ ...manifestOf('my.a1', '0.1.0'), capabilities: ['ai.tools', 'ui.panel'] }, code('tool_a1'))
+    await pipeline.approve()
+    await pipeline.submit({ ...manifestOf('my.a2', '0.1.0'), capabilities: ['ai.tools', 'ui.panel'] }, code('tool_a2'))
+    await pipeline.approve()
+    await waitFor('两个工具都注册', () => host.getTools().filter((t) => t.name.startsWith('tool_')).length === 2)
+    expect(host.getTools().map((t) => t.name).sort()).toEqual(['tool_a1', 'tool_a2'])
+  })
+
   it('approve 落盘 + 注册 + 工具可见 + event:ext-list-changed（端到端真沙箱）', async () => {
     const { pipeline, host, extensionsDir } = await makeScope('approve-flow')
     await pipeline.submit(manifestOf('my.greet', '0.1.0'), GREET_CODE)

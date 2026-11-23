@@ -46,9 +46,11 @@ export type {
 } from './authlibInjector'
 
 export {
+  BMCLAPI_MANIFEST_URL,
   DEFAULT_MANIFEST_URL,
   fetchVersionJson,
   fetchVersionManifest,
+  fetchVersionManifestWithFallback,
   findVersionEntry,
   mergeVersionJson
 } from './manifest'
@@ -62,6 +64,18 @@ export type { InstallOptions, InstallProgress, InstallResult } from './install'
 
 export { resolveInstalledVersion } from './installed'
 export type { InstalledVersionResolution } from './installed'
+
+export {
+  DEFAULT_INSTANCE_ID,
+  createInstance,
+  deleteInstance,
+  ensureDefaultInstance,
+  getInstance,
+  isInstanceId,
+  listInstances,
+  updateInstance
+} from './instances'
+export type { InstanceMeta } from './instances'
 
 export {
   MODRINTH_USER_AGENT,

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import { installModFile, listModVersions, searchMods } from '@mcl/core'
-import type { ModFileInfo, RuntimeInfo } from '@mcl/core'
+import type { InstanceMeta, ModFileInfo, RuntimeInfo } from '@mcl/core'
 import type { AiTool } from '@mcl/agent'
 import type { HostComponent } from '@mcl/host'
 import type { SubmitResult } from '@mcl/ext-runtime'
@@ -13,17 +13,26 @@ export interface AiToolsDeps {
   /** 当前配置的 javaPath（未配置为空串）。 */
   javaPath(): string
   isGameRunning(): boolean
-  /** 游戏实例目录（mods/options.txt/logs 都在这里）。 */
-  instanceDir(): string
-  launchVersion(id: string): Promise<{ logFile: string }>
+  /** 实例目录定位（mods/options.txt/logs 都在实例目录下）。 */
+  instanceDirFor(instanceId: string): string
+  /** 实例清单（M6 多实例）。 */
+  listInstancesPayload(): Promise<InstanceMeta[]>
+  /** 新建实例（id 缺省自动生成；versionId 可绑定）。 */
+  createInstancePayload(input: { id?: string; name: string; versionId?: string }): Promise<InstanceMeta>
+  /** 启动实例绑定的版本。 */
+  launchInstance(instanceId: string): Promise<{ logFile: string }>
   installFabricVersion(gameVersion: string, loaderVersion?: string): Promise<{ versionId: string }>
-  listModsPayload(): Promise<ModFileInfo[]>
-  removeModFile(filename: string): Promise<void>
-  readGameOptions(): Promise<Array<{ key: string; value: string }>>
-  writeGameOptions(entries: Record<string, string>): Promise<Array<{ key: string; value: string }>>
+  listModsPayload(instanceId: string): Promise<ModFileInfo[]>
+  removeModFile(instanceId: string, filename: string): Promise<void>
+  readGameOptions(instanceId: string): Promise<Array<{ key: string; value: string }>>
+  writeGameOptions(instanceId: string, entries: Record<string, string>): Promise<Array<{ key: string; value: string }>>
   /** 提交扩展提案（M5-5：一致性检查 → 待审核槽，用户批准才装载）。 */
   submitExtensionProposal(manifest: unknown, code: string): Promise<SubmitResult>
 }
+
+/** 工具 args 的 instanceId 归一：缺省 main。 */
+const resolveInstanceId = (args: Record<string, unknown>): string =>
+  typeof args.instanceId === 'string' && args.instanceId !== '' ? args.instanceId : 'main'
 
 /**
  * 内建 AI 工具组件（M5-1 dogfooding 第一刀）：与未来的沙箱扩展走同一套
@@ -65,10 +74,13 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
     },
     {
       name: 'read_crash_log',
-      description: '读取游戏日志（logs/latest.log）的尾部，以及 crash-reports 目录下最新崩溃报告的内容。',
-      parameters: { type: 'object', properties: {} },
-      handler: async () => {
-        const instanceDir = deps.instanceDir()
+      description: '读取实例的游戏日志（logs/latest.log）尾部与 crash-reports 最新崩溃报告。instanceId 缺省 main。',
+      parameters: {
+        type: 'object',
+        properties: { instanceId: { type: 'string', description: '实例 id（见 list_instances），缺省 main' } }
+      },
+      handler: async (args) => {
+        const instanceDir = deps.instanceDirFor(resolveInstanceId(args))
         const parts: string[] = []
         try {
           const log = await fs.readFile(join(instanceDir, 'logs', 'latest.log'), 'utf8')
@@ -92,26 +104,59 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
       }
     },
     {
-      name: 'launch_game',
+      name: 'list_instances',
+      description: '列出游戏实例（多实例：每个实例是独立的 mods/存档/设置目录，绑定一个已安装版本）。',
+      parameters: { type: 'object', properties: {} },
+      handler: async () => {
+        const instances = await deps.listInstancesPayload()
+        return JSON.stringify({
+          instances: instances.map((i) => ({ id: i.id, name: i.name, versionId: i.versionId ?? null }))
+        })
+      }
+    },
+    {
+      name: 'create_instance',
       description:
-        '启动一个已安装的版本（原版或 Fabric 版本）。versionId 缺省且只装了一个版本时自动选它；游戏已在运行时会失败。',
+        '新建游戏实例（独立 mods/存档/设置）。name 必填；versionId 建议绑定已安装版本（可用 list_versions 查）；id 缺省自动生成。新实例不会影响 main 实例的 mods 与存档。',
       parameters: {
         type: 'object',
-        properties: { versionId: { type: 'string', description: '要启动的版本 id（见 list_versions）' } }
+        properties: {
+          name: { type: 'string', description: '实例显示名（1-64 字符）' },
+          versionId: { type: 'string', description: '绑定的已安装版本 id，如 1.16.5' },
+          id: { type: 'string', description: '实例 id（目录名形态：字母/数字/._-），缺省自动生成' }
+        },
+        required: ['name']
       },
       handler: async (args) => {
-        let versionId = typeof args.versionId === 'string' && args.versionId ? args.versionId : ''
-        if (!versionId) {
-          const installed = await deps.listInstalledVersions()
-          if (installed.length === 1) versionId = installed[0]
+        if (typeof args.name !== 'string' || args.name.trim() === '') throw new Error('name 需为非空字符串')
+        const input: { id?: string; name: string; versionId?: string } = { name: args.name }
+        if (typeof args.id === 'string' && args.id !== '') input.id = args.id
+        if (typeof args.versionId === 'string' && args.versionId !== '') input.versionId = args.versionId
+        const meta = await deps.createInstancePayload(input)
+        return JSON.stringify({ ok: true, instance: { id: meta.id, name: meta.name, versionId: meta.versionId ?? null } })
+      }
+    },
+    {
+      name: 'launch_game',
+      description:
+        '启动一个实例（实例绑定版本的启动）。instanceId 缺省时只有一个实例就自动选它；实例未绑定版本会报错提示；游戏已在运行时会失败。',
+      parameters: {
+        type: 'object',
+        properties: { instanceId: { type: 'string', description: '实例 id（见 list_instances）' } }
+      },
+      handler: async (args) => {
+        let instanceId = typeof args.instanceId === 'string' && args.instanceId ? args.instanceId : ''
+        if (!instanceId) {
+          const instances = await deps.listInstancesPayload()
+          if (instances.length === 1) instanceId = instances[0].id
           else {
             return JSON.stringify({
-              error: `需要指定 versionId。已安装：${installed.join('、') || '（无）'}`
+              error: `需要指定 instanceId。现有实例：${instances.map((i) => i.id).join('、') || '（无）'}`
             })
           }
         }
-        const { logFile } = await deps.launchVersion(versionId)
-        return JSON.stringify({ ok: true, versionId, logFile })
+        const { logFile } = await deps.launchInstance(instanceId)
+        return JSON.stringify({ ok: true, instanceId, logFile })
       }
     },
     {
@@ -161,14 +206,15 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
     {
       name: 'install_mod',
       description:
-        '从 Modrinth 下载一个 mod 到实例 mods 目录（取该版本 primary 文件，sha1 校验）。project 为项目 id 或 slug；version 可传 version_number 或版本 id，缺省取过滤后最新一个。gameVersion 与 loader 必填以防装错版本。',
+        '从 Modrinth 下载一个 mod 到实例 mods 目录（取该版本 primary 文件，sha1 校验）。project 为项目 id 或 slug；version 可传 version_number 或版本 id，缺省取过滤后最新一个。gameVersion 与 loader 必填以防装错版本。instanceId 缺省 main。',
       parameters: {
         type: 'object',
         properties: {
           project: { type: 'string', description: 'Modrinth 项目 id 或 slug' },
           version: { type: 'string', description: 'version_number 或版本 id，缺省最新' },
           gameVersion: { type: 'string', description: '目标游戏版本，如 1.16.5' },
-          loader: { type: 'string', description: '目标加载器，如 fabric' }
+          loader: { type: 'string', description: '目标加载器，如 fabric' },
+          instanceId: { type: 'string', description: '实例 id（见 list_instances），缺省 main' }
         },
         required: ['project', 'gameVersion', 'loader']
       },
@@ -190,39 +236,48 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
         if (!file) {
           return JSON.stringify({ error: `版本 ${chosen.versionNumber} 没有可下载文件` })
         }
-        const dest = await installModFile(deps.instanceDir(), file)
+        const dest = await installModFile(deps.instanceDirFor(resolveInstanceId(args)), file)
         return JSON.stringify({ ok: true, mod: chosen.versionNumber, filename: file.filename, dest })
       }
     },
     {
       name: 'list_mods',
-      description: '列出实例 mods 目录已装的 mod 文件。',
-      parameters: { type: 'object', properties: {} },
-      handler: async () => JSON.stringify({ mods: await deps.listModsPayload() })
+      description: '列出实例 mods 目录已装的 mod 文件。instanceId 缺省 main。',
+      parameters: {
+        type: 'object',
+        properties: { instanceId: { type: 'string', description: '实例 id（见 list_instances），缺省 main' } }
+      },
+      handler: async (args) => JSON.stringify({ mods: await deps.listModsPayload(resolveInstanceId(args)) })
     },
     {
       name: 'remove_mod',
-      description: '从实例 mods 目录删除一个 mod（按文件名）。',
+      description: '从实例 mods 目录删除一个 mod（按文件名）。instanceId 缺省 main。',
       parameters: {
         type: 'object',
-        properties: { filename: { type: 'string', description: 'mods 目录下的文件名' } },
+        properties: {
+          filename: { type: 'string', description: 'mods 目录下的文件名' },
+          instanceId: { type: 'string', description: '实例 id（见 list_instances），缺省 main' }
+        },
         required: ['filename']
       },
       handler: async (args) => {
         if (typeof args.filename !== 'string') throw new Error('filename 需为字符串')
-        await deps.removeModFile(args.filename)
+        await deps.removeModFile(resolveInstanceId(args), args.filename)
         return JSON.stringify({ ok: true })
       }
     },
     {
       name: 'read_config',
-      description: '读取游戏设置 options.txt（实例目录；keys 缺省读全部）。',
+      description: '读取实例的游戏设置 options.txt（keys 缺省读全部）。instanceId 缺省 main。',
       parameters: {
         type: 'object',
-        properties: { keys: { type: 'array', items: { type: 'string' }, description: '要读取的键，缺省全部' } }
+        properties: {
+          keys: { type: 'array', items: { type: 'string' }, description: '要读取的键，缺省全部' },
+          instanceId: { type: 'string', description: '实例 id（见 list_instances），缺省 main' }
+        }
       },
       handler: async (args) => {
-        const all = await deps.readGameOptions()
+        const all = await deps.readGameOptions(resolveInstanceId(args))
         const keys = Array.isArray(args.keys)
           ? args.keys.filter((k): k is string => typeof k === 'string')
           : null
@@ -232,10 +287,13 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
     {
       name: 'write_config',
       description:
-        '写入游戏设置 options.txt（如 fov、gamma、musicVolume 等，值一律为字符串；游戏下次启动生效）。',
+        '写入实例的游戏设置 options.txt（如 fov、gamma、musicVolume 等，值一律为字符串；游戏下次启动生效）。instanceId 缺省 main。',
       parameters: {
         type: 'object',
-        properties: { entries: { type: 'object', additionalProperties: { type: 'string' } } },
+        properties: {
+          entries: { type: 'object', additionalProperties: { type: 'string' } },
+          instanceId: { type: 'string', description: '实例 id（见 list_instances），缺省 main' }
+        },
         required: ['entries']
       },
       handler: async (args) => {
@@ -246,7 +304,7 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
         for (const [k, v] of Object.entries(args.entries as Record<string, unknown>)) {
           entries[k] = String(v)
         }
-        const options = await deps.writeGameOptions(entries)
+        const options = await deps.writeGameOptions(resolveInstanceId(args), entries)
         return JSON.stringify({ ok: true, options })
       }
     },

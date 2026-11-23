@@ -28,16 +28,8 @@ export function isCoEffectExpr(expr: unknown): expr is CoEffectExpr {
   return expr.startsWith('instance.exists:') && expr.length > 'instance.exists:'.length
 }
 
-/** 实例 id 合法性（目录名形态，禁路径分隔符与 ..）。 */
-export function isInstanceId(id: unknown): id is string {
-  return (
-    typeof id === 'string' &&
-    id.length > 0 &&
-    id.length <= 64 &&
-    /^[a-z0-9][a-z0-9._-]*$/i.test(id) &&
-    !id.includes('..')
-  )
-}
+/** 实例 id 合法性（目录名形态，禁路径分隔符与 ..）。定义在 @mcl/core（实例概念的归属层），此处转发导出。 */
+export { isInstanceId } from '@mcl/core'
 
 /** 主机名形态校验（域名白名单用：精确匹配、无通配、无协议/端口/路径）。 */
 export function isHostname(s: unknown): s is string {

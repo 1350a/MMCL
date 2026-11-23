@@ -6,15 +6,19 @@ import {
   assertJavaCompatible,
   authenticate,
   BMCLAPI_MAVEN_BASE,
+  createInstance,
+  deleteInstance,
   detectJava,
   ensureAuthlibInjector,
+  ensureDefaultInstance,
   fetchFabricLoaderVersions,
   fetchProfileWithSkin,
   fetchServerMeta,
   fetchVersionJson,
-  fetchVersionManifest,
+  fetchVersionManifestWithFallback,
   findVersionEntry,
   generateClientToken,
+  getInstance,
   installFabric,
   installLocalMod,
   installRuntime,
@@ -23,6 +27,7 @@ import {
   JavaVersionMismatchError,
   launchGame,
   listInstalledRuntimes,
+  listInstances,
   listMods,
   loadAccounts,
   mergeVersionJson,
@@ -33,6 +38,7 @@ import {
   resolveApiRoot,
   resolveInstalledVersion,
   saveAccounts,
+  updateInstance,
   validate,
   validatePlayerName,
   writeOptionsTxt
@@ -40,6 +46,7 @@ import {
 import type {
   Account,
   AuthenticateResponse,
+  InstanceMeta,
   JavaAgentOptions,
   ModFileInfo,
   OfflineAccount,
@@ -52,6 +59,7 @@ import type {
   YgProfile
 } from '@mcl/core'
 import { ChatClient, ChatSession } from '@mcl/agent'
+import type { ChatMessage } from '@mcl/agent'
 import { ComponentHost } from '@mcl/host'
 import type { PanelState } from '@mcl/host'
 import {
@@ -122,6 +130,10 @@ export class LauncherService {
   private readonly capabilities: CapabilityRuntime
   /** 扩展流水线（M5-5）：AI 提案 → 一致性检查 → 审核 → 热装载/卸载。 */
   private readonly pipeline: ExtensionPipeline
+  /** 默认实例迁移（M6）：首启创建 main / 旧裸目录补元数据；实例相关 IPC 与启动都等它。 */
+  private readonly instanceReady: Promise<unknown>
+  /** AI 会话落盘文件（重启恢复对话，MVP 收尾）。 */
+  private readonly aiSessionPath: string
 
   constructor(
     readonly rootDir: string,
@@ -141,6 +153,11 @@ export class LauncherService {
       host: this.components,
       notify: (channel, payload) => this.send(channel, payload)
     })
+    this.instanceReady = ensureDefaultInstance(rootDir).catch((err) => {
+      console.error('[instances] 默认实例初始化失败：', err)
+      throw err instanceof Error ? err : new Error(String(err))
+    })
+    this.aiSessionPath = join(rootDir, 'ai-session.json')
     this.components.setCoEffect('game.notRunning', true)
     this.components.setCoEffect('ai.configured', this.isAiConfigured())
     this.components.register(createAiToolsComponent(this.aiToolsDeps()))
@@ -366,7 +383,8 @@ export class LauncherService {
 
   private async ensureManifest(): Promise<VersionManifest> {
     if (!this.manifest) {
-      this.manifest = await fetchVersionManifest()
+      // 官方 launchermeta 失败（校园网劫持/不可达）回退 BMCLAPI 镜像（M6，与库下载多源回退同思路）
+      this.manifest = await fetchVersionManifestWithFallback()
     }
     return this.manifest
   }
@@ -452,15 +470,68 @@ export class LauncherService {
     this.installAbort?.abort()
   }
 
-  /** 游戏实例目录（mods/options.txt/logs 都在这里）。 */
-  private instanceDir(): string {
-    return join(this.rootDir, 'instances', 'main')
+  /** 实例目录（mods/options.txt/saves/logs 都在这里）。 */
+  private instanceDirFor(instanceId: string): string {
+    return join(this.rootDir, 'instances', instanceId)
   }
 
-  /** 启动游戏（需已安装版本 + 已保存账户）。日志经事件推送并缓冲。 */
-  async launchVersion(id: string): Promise<{ logFile: string }> {
-    if (typeof id !== 'string') throw new Error('invalid version id')
+  // ---- 多实例（M6，DESIGN.md §5.7）----
+
+  /** 实例清单（等默认实例迁移完成）。 */
+  async listInstancesPayload(): Promise<InstanceMeta[]> {
+    await this.instanceReady
+    return listInstances(this.rootDir)
+  }
+
+  /**
+   * 新建实例（id 缺省自动生成；versionId 给了就校验已安装并绑定）。
+   * 单独暴露 createInstancePayload 而非直接转发 core：版本绑定校验依赖启动器状态。
+   */
+  async createInstancePayload(input: { id?: string; name: string; versionId?: string }): Promise<InstanceMeta> {
+    await this.instanceReady
+    const id = typeof input.id === 'string' && input.id.trim() !== '' ? input.id.trim() : `inst-${Date.now().toString(36)}`
+    const versionId = typeof input.versionId === 'string' && input.versionId !== '' ? input.versionId : undefined
+    if (versionId) await this.assertVersionInstalled(versionId)
+    return createInstance(this.rootDir, { id, name: input.name, ...(versionId ? { versionId } : {}) })
+  }
+
+  /** 给实例绑定已安装版本（versionId 可后续更换）。 */
+  async setInstanceVersion(instanceId: string, versionId: string): Promise<InstanceMeta> {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    if (typeof versionId !== 'string' || versionId.length === 0) throw new Error('invalid version id')
+    await this.instanceReady
+    await this.assertVersionInstalled(versionId)
+    return updateInstance(this.rootDir, instanceId, { versionId })
+  }
+
+  /**
+   * 删除实例（整个实例目录不可逆删除，UI 侧确认弹窗把关）。
+   * 游戏运行中一律拒绝（单游戏约束，避免删到正在运行的 gameDir）；
+   * 删除 main 后下次启动 ensureDefaultInstance 会重建空 main。
+   * 刻意不提供 AI 工具入口：AI 触发存档删除是脚枪。
+   */
+  async deleteInstancePayload(instanceId: string): Promise<void> {
+    if (this.game) throw new Error('游戏正在运行，请先停止再删除实例')
+    await this.instanceReady
+    await deleteInstance(this.rootDir, instanceId)
+  }
+
+  /** 断言版本已安装（绑定版本时的即时反馈，避免启动时才发现绑错）。 */
+  private async assertVersionInstalled(versionId: string): Promise<void> {
+    const installed = await this.listInstalledVersions()
+    if (!installed.includes(versionId)) {
+      throw new Error(`版本 ${versionId} 未安装（已安装：${installed.join('、') || '（无）'}）`)
+    }
+  }
+
+  /** 启动实例绑定的版本（需实例已绑版本 + 已保存账户）。日志经事件推送并缓冲。 */
+  async launchInstance(instanceId: string): Promise<{ logFile: string }> {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (this.game) throw new Error('已有游戏在运行')
+    await this.instanceReady
+    const instance = await getInstance(this.rootDir, instanceId)
+    const id = instance.versionId
+    if (!id) throw new Error(`实例 ${instance.name}（${instanceId}）尚未绑定版本：请先在实例卡选择版本，或让 AI 用 create_instance 创建`)
     let account = await this.getAccount()
     if (!account) throw new Error('请先创建账户')
     // 解析继承链（fabric 等子版本）：合并父版本库/参数，client jar 取继承链根的
@@ -483,7 +554,7 @@ export class LauncherService {
     const spec = assembleLaunch(versionJson, {
       javaPath: java.path,
       account,
-      gameDir: this.instanceDir(),
+      gameDir: this.instanceDirFor(instanceId),
       rootDir: this.rootDir,
       launcherName: 'MCL',
       launcherVersion: '0.1.0',
@@ -607,27 +678,30 @@ export class LauncherService {
     }
   }
 
-  listModsPayload(): Promise<ModFileInfo[]> {
-    return listMods(this.instanceDir())
+  listModsPayload(instanceId: string): Promise<ModFileInfo[]> {
+    return listMods(this.instanceDirFor(instanceId))
   }
 
-  removeModFile(filename: string): Promise<void> {
+  removeModFile(instanceId: string, filename: string): Promise<void> {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (typeof filename !== 'string') throw new Error('invalid mod filename')
-    return removeMod(this.instanceDir(), filename)
+    return removeMod(this.instanceDirFor(instanceId), filename)
   }
 
-  installModFromLocal(jarPath: string): Promise<string> {
+  installModFromLocal(instanceId: string, jarPath: string): Promise<string> {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (typeof jarPath !== 'string') throw new Error('invalid mod path')
-    return installLocalMod(this.instanceDir(), jarPath)
+    return installLocalMod(this.instanceDirFor(instanceId), jarPath)
   }
 
-  readGameOptions(): Promise<Array<{ key: string; value: string }>> {
-    return readOptionsTxt(this.instanceDir())
+  readGameOptions(instanceId: string): Promise<Array<{ key: string; value: string }>> {
+    return readOptionsTxt(this.instanceDirFor(instanceId))
   }
 
-  writeGameOptions(entries: Record<string, string>): Promise<Array<{ key: string; value: string }>> {
+  writeGameOptions(instanceId: string, entries: Record<string, string>): Promise<Array<{ key: string; value: string }>> {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
     if (typeof entries !== 'object' || entries === null) throw new Error('invalid options entries')
-    return writeOptionsTxt(this.instanceDir(), entries)
+    return writeOptionsTxt(this.instanceDirFor(instanceId), entries)
   }
 
   stopGame(): void {
@@ -690,13 +764,15 @@ export class LauncherService {
       listRuntimes: () => this.listRuntimes(),
       javaPath: () => this.readSettings().javaPath ?? '',
       isGameRunning: () => this.isGameRunning(),
-      instanceDir: () => this.instanceDir(),
-      launchVersion: (id) => this.launchVersion(id),
+      instanceDirFor: (instanceId) => this.instanceDirFor(instanceId),
+      listInstancesPayload: () => this.listInstancesPayload(),
+      createInstancePayload: (input) => this.createInstancePayload(input),
+      launchInstance: (instanceId) => this.launchInstance(instanceId),
       installFabricVersion: (gameVersion, loaderVersion) => this.installFabricVersion(gameVersion, loaderVersion),
-      listModsPayload: () => this.listModsPayload(),
-      removeModFile: (filename) => this.removeModFile(filename),
-      readGameOptions: () => this.readGameOptions(),
-      writeGameOptions: (entries) => this.writeGameOptions(entries),
+      listModsPayload: (instanceId) => this.listModsPayload(instanceId),
+      removeModFile: (instanceId, filename) => this.removeModFile(instanceId, filename),
+      readGameOptions: (instanceId) => this.readGameOptions(instanceId),
+      writeGameOptions: (instanceId, entries) => this.writeGameOptions(instanceId, entries),
       submitExtensionProposal: (manifest, code) => this.pipeline.submit(manifest, code)
     }
   }
@@ -705,8 +781,8 @@ export class LauncherService {
     return [
       '你是 Minecraft 第三方启动器 MCL 的内置助手。',
       '回答简洁、可操作；涉及版本与运行状态时优先调用工具查询而不是猜测。',
-      '用户环境为 Windows；游戏实例目录在启动器数据目录的 instances/main 下。',
-      '装 mod 流程：确认原版已安装 → install_fabric 装 Fabric 加载器 → search_mods（带 gameVersion+loader）→ install_mod（project/gameVersion/loader 必填）→ 建议用户启动对应的 fabric-loader 版本（launch_game）。',
+      '用户环境为 Windows；游戏实例在启动器数据目录 instances/<实例 id> 下（多实例：list_instances 查看、create_instance 新建）。每个实例绑定一个已安装版本，launch_game 按实例启动；装 mod / 改配置默认作用于 main 实例，可用 instanceId 参数指定其他实例。',
+      '装 mod 流程：确认目标实例已绑定（或绑定）合适版本 → install_fabric 装 Fabric 加载器 → search_mods（带 gameVersion+loader）→ install_mod（project/gameVersion/loader 必填）→ 建议用户启动对应实例（launch_game）。',
       '改游戏设置用 read_config / write_config（options.txt，游戏下次启动生效）；启动游戏用 launch_game。',
       '对启动器或 mod 有不确定的版本兼容问题时，先向用户确认再操作。',
       '用户请你写启动器扩展（自定义工具/面板/钩子等）时，用 generate_extension 提交，规范如下：',
@@ -726,6 +802,9 @@ export class LauncherService {
     try {
       if (!this.aiSession) {
         this.aiSession = new ChatSession(this.aiSystemPrompt())
+        // 重启恢复：落盘历史回灌（system prompt 每次启动重建，不落盘）
+        const saved = this.readAiSessionHistory()
+        if (saved.length > 0) this.aiSession.restoreHistory(saved)
       }
       this.aiSession.addUser(text)
 
@@ -737,6 +816,7 @@ export class LauncherService {
           onToolEvent: (e) => this.send('event:ai-tool', e)
         })
         this.aiSession.addAssistant(result.content)
+        await this.persistAiSession()
         return { content: result.content }
       } catch (err) {
         // 失败也要通知 UI 恢复输入状态（401/网络错误等），并回退本条用户消息
@@ -752,6 +832,35 @@ export class LauncherService {
 
   aiClear(): void {
     this.aiSession?.clear()
+    void fs.rm(this.aiSessionPath, { force: true }).catch(() => undefined)
+  }
+
+  /** 渲染层回灌：落盘的会话历史（重启后恢复聊天显示，不含 system）。 */
+  aiHistoryPayload(): Array<{ role: 'user' | 'assistant'; text: string }> {
+    return this.readAiSessionHistory()
+      .filter((m) => m.role === 'user' || m.role === 'assistant')
+      .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.content ?? '' }))
+  }
+
+  /** 读取落盘的会话历史（不存在/损坏返回空）。 */
+  private readAiSessionHistory(): ChatMessage[] {
+    try {
+      const raw = JSON.parse(readFileSync(this.aiSessionPath, 'utf8')) as { messages?: unknown }
+      return Array.isArray(raw.messages) ? (raw.messages as ChatMessage[]) : []
+    } catch {
+      return []
+    }
+  }
+
+  /** 会话落盘（保留最近 100 条；失败不阻塞对话）。 */
+  private async persistAiSession(): Promise<void> {
+    if (!this.aiSession) return
+    const messages = this.aiSession.exportHistory().slice(-100)
+    try {
+      await fs.writeFile(this.aiSessionPath, JSON.stringify({ messages }, null, 2))
+    } catch (err) {
+      console.error('[ai] 会话落盘失败：', err)
+    }
   }
 
   /** 扩展面板清单（渲染层初始拉取）。 */

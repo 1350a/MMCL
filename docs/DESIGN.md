@@ -86,7 +86,7 @@ mcl/
 
 ### 5.1 AI 统一 OpenAI 兼容协议
 
-设置页只暴露三个字段：baseURL + apiKey + model。一次适配同时覆盖 OpenAI / DeepSeek / Kimi / GLM / Ollama（本地）。不内置模型权重 → 无权重许可风险、无体积负担。调用层自实现 HTTP + SSE，不引入 SDK 依赖。**M2 已实现（2026-11-21）**：配置存 settings.json（UI 回显掩码 key）；会话为内存态不落盘（重启即清，MVP 约定）；网络请求只在主进程（renderer 沙箱无 Node），流式增量经白名单 IPC 推送。
+设置页只暴露三个字段：baseURL + apiKey + model。一次适配同时覆盖 OpenAI / DeepSeek / Kimi / GLM / Ollama（本地）。不内置模型权重 → 无权重许可风险、无体积负担。调用层自实现 HTTP + SSE，不引入 SDK 依赖。**M2 已实现（2026-11-21）**：配置存 settings.json（UI 回显掩码 key）；网络请求只在主进程（renderer 沙箱无 Node），流式增量经白名单 IPC 推送。**会话历史落盘（2026-11-22 起，推翻 M2「内存态不落盘」约定）**：`userData/ai-session.json` 最近 100 条，重启恢复（aiSend 首次用时回灌主进程会话 + IPC `ai:history` 回灌渲染层显示）；system prompt 每次启动重建不落盘；agent 层只提供 exportHistory/restoreHistory（只收 user/assistant），落盘职责归调用方；「清除对话」删盘。
 
 ### 5.2 三层愿景 = 工具集演化
 
@@ -148,6 +148,20 @@ fetch + Range 断点续传（`.part` 中间文件，校验通过后 rename 生�
 
 contextIsolation + sandbox + nodeIntegration:false；window.open 拦截转外链；IPC 参数校验；下载内容校验后才生效。
 
+### 5.7 多实例隔离（M6，设计定稿 2026-11-22）
+
+**问题**：M1~M5 全版本共用单实例 `instances/main`，1.16.5 与 1.20.1 的 mods/options/存档混装（AI 验收 M4 时已在绕）。**实例 = 独立 gameDir**：Minecraft 的 mods/、saves/、options.txt、logs/、crash-reports/ 全部天然落在实例目录内（gameDir 已参数化），隔离是零成本的；版本本身（versions/、assets/、libraries/）**全局共享不复制**——实例只是「绑定一个已安装版本的独立工作目录」。
+
+**模型**（core/instances.ts，纯 TS 可单测）：
+
+- 实例 = `instances/<id>/instance.json`：`{ id, name, versionId?, createdAt? }`。id = 目录名（复用 `isInstanceId` 形态校验，与扩展 manifest.id 同约定）；`versionId` 绑定启动的已安装版本（标准启动器模型：MultiMC/Prism 同款），**可空 = 待用户设置**——兼容迁移：既有 `instances/main` 无 instance.json 时按 `{ id: 'main', name: '主实例' }` 合成（不写盘、不猜版本，UI/AI 显式设置后落盘）。
+- `ensureDefaultInstance`：首次运行（instances 目录不存在或无 main）创建 main；`listInstances` 扫描式（同扩展目录约定，无注册表）；`updateInstance` 改 name/versionId。
+- 协效应 `instance.exists:<id>`（M5 已入词汇表）由此获得真实语义；`fs.instance` 的 `fsInstances` 作用域天然按实例 id 生效。
+
+**接线**：launcher 的 `instanceDir()` 硬编码 'main' 全部改为按 instanceId 参数化（启动/mods/options/crash log）；AI 工具新增 `list_instances` / `create_instance`，`launch_game` 改按实例启动（实例绑定版本），`install_mod/list_mods/remove_mod/read_config/write_config/read_crash_log` 加可选 `instanceId`（缺省 main）；渲染层「启动游戏」卡改「实例」卡（实例下拉 + 绑定版本 + 新建/删除实例），Mods 卡跟随选中实例。**删除实例** = 整实例目录不可逆删除（UI 确认弹窗把关、游戏运行中一律拒绝、main 删后下次启动 ensureDefaultInstance 重建空 main），**刻意不提供 AI 工具入口**——AI 触发存档删除是脚枪。单游戏进程约束不变（`game.notRunning` 协效应保持全局）。
+
+**顺手小件**：version_manifest 加 BMCLAPI 兜底（`fetchVersionManifestWithFallback`，官方 launchermeta 失败回退镜像，校园网被劫持时清单仍可用——与 M4 库下载多源回退同思路）。
+
 ## 6. 许可证治理
 
 ### 6.1 红线
@@ -166,6 +180,15 @@ electron（MIT）、electron-vite（MIT）、vite（MIT）、react（MIT）、ty
 ### 6.3 流程
 
 新增依赖前 `pnpm licenses list` 扫描 + 人工复核依赖树；无法确认许可的包不进项目。
+
+### 6.4 UI 素材治理（2026-11-22 定论）
+
+`Blocks/`（方块/物品风渲染图 + 加载器名图标）与 `Skins/`（官方默认皮肤 9 张）自 PCL 仓库（Meloong-Git/PCL）转存，放仓库根待接入（接入时挪 `apps/launcher/src/renderer/src/assets/`）。纪律：
+
+- **权利人 = Mojang / 加载器官方**，PCL 仅是转存渠道，不需向 PCL 署名其项目；
+- 按 PCL《分发有限许可》**轻度使用档**走：只使用极小部分内容 + 适当署名 + 产品名称/界面不与 PCL 混淆；**重度档（名称以 PCL 开头/关于页署名赞助/开源/UI 主色蓝色）MMCL 不可走**——完整条款以 PCL 仓库 LICENCE 原文为准；
+- **加载器名图标并非官方 logo**（Fabric.png 实为 MC 纸类贴图、NeoForge.png 为 MC 狐狸脸，PCL 拿 MC 贴图当图标）→ UI 要真 logo 从 Fabric/NeoForged 官方取；
+- 不做逐像素溯源（有疑虑直接去游戏/加载器官网重新获取）。
 
 ## 7. 路线图
 

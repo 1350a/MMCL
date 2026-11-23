@@ -8,6 +8,7 @@ import {
   evaluateRules,
   fetchVersionJson,
   fetchVersionManifest,
+  fetchVersionManifestWithFallback,
   findVersionEntry,
   HttpError,
   mergeVersionJson
@@ -59,6 +60,30 @@ describe('fetchVersionManifest', () => {
   it('404 抛 HttpError', async () => {
     const base = await startJsonFixture({})
     await expect(fetchVersionManifest(`${base}/missing`)).rejects.toBeInstanceOf(HttpError)
+  })
+})
+
+describe('fetchVersionManifestWithFallback（M6 BMCLAPI 兜底）', () => {
+  const manifest = {
+    latest: { release: '1.20.1', snapshot: 'snapshot' },
+    versions: [{ id: '1.20.1', type: 'release', url: 'http://x/1.20.1.json', time: 't', releaseTime: 'r', sha1: 'a'.repeat(40) }]
+  }
+
+  it('官方源成功：直接返回，不走兜底', async () => {
+    const base = await startJsonFixture({ '/official': manifest })
+    const fetched = await fetchVersionManifestWithFallback(`${base}/official`, `${base}/mirror`)
+    expect(fetched.latest.release).toBe('1.20.1')
+  })
+
+  it('官方源失败（劫持/不可达）：回退镜像源', async () => {
+    const base = await startJsonFixture({ '/mirror': manifest }) // /official 路径不存在 → 404
+    const fetched = await fetchVersionManifestWithFallback(`${base}/official`, `${base}/mirror`)
+    expect(fetched.versions).toHaveLength(1)
+  })
+
+  it('两源都失败：抛官方源的原始错误（便于归因劫持 vs 镜像同样不可达）', async () => {
+    const base = await startJsonFixture({})
+    await expect(fetchVersionManifestWithFallback(`${base}/official`, `${base}/mirror`)).rejects.toBeInstanceOf(HttpError)
   })
 })
 

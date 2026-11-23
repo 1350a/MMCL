@@ -37,6 +37,11 @@ function App() {
   const [progress, setProgress] = useState<InstallProgressPayload | null>(null)
   const [installing, setInstalling] = useState(false)
   const [installError, setInstallError] = useState('')
+  // 实例（M6 多实例）
+  const [instances, setInstances] = useState<InstanceMetaPayload[]>([])
+  const [selectedInstance, setSelectedInstance] = useState('')
+  const [newInstName, setNewInstName] = useState('')
+  const [newInstVersion, setNewInstVersion] = useState('')
   // 游戏
   const [gameRunning, setGameRunning] = useState(false)
   const [gameLines, setGameLines] = useState<string[]>([])
@@ -65,8 +70,18 @@ function App() {
   const aiChatRef = useRef<HTMLDivElement>(null)
 
   const refreshMods = (): void => {
-    window.mcl.listMods().then(setMods)
+    if (!selectedInstance) return // 实例清单未就绪，随 selectedInstance 变化的 effect 会再刷
+    window.mcl.listMods(selectedInstance).then(setMods)
   }
+
+  const refreshInstances = (): void => {
+    window.mcl.listInstances().then((list) => {
+      setInstances(list)
+      setSelectedInstance((prev) => (prev && list.some((i) => i.id === prev) ? prev : (list[0]?.id ?? '')))
+    })
+  }
+
+  const selectedMeta = instances.find((i) => i.id === selectedInstance)
 
   useEffect(() => {
     // 初始状态
@@ -80,11 +95,15 @@ function App() {
     window.mcl.listInstalledVersions().then(setInstalled)
     window.mcl.listRuntimes().then(setRuntimes)
     window.mcl.isGameRunning().then(setGameRunning)
-    refreshMods()
+    refreshInstances()
     window.mcl.getAiConfig().then((c) => {
       setAiConfig(c)
       setAiBase(c.baseUrl)
       setAiModel(c.model)
+    })
+    // AI 会话落盘回灌（重启恢复聊天显示）
+    window.mcl.aiHistory().then((hist) => {
+      if (hist.length > 0) setAiMessages(hist)
     })
     window.mcl.listPanels().then(setPanels)
     window.mcl.extPending().then(setPendingExt)
@@ -169,6 +188,12 @@ function App() {
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
   }, [gameLines])
+
+  // 切换实例：刷新该实例的 mods 列表
+  useEffect(() => {
+    refreshMods()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedInstance])
 
   // 外置账户变化时刷新皮肤头像
   useEffect(() => {
@@ -307,8 +332,41 @@ function App() {
     run(async () => {
       setGameLines([])
       setNeedJavaMajor(null)
-      await window.mcl.launchGame(selectedInstalled)
+      await window.mcl.launchGame(selectedInstance)
       setGameRunning(true)
+      setMessage('')
+    })
+
+  const onBindVersion = () =>
+    run(async () => {
+      if (!selectedInstance || !selectedInstalled) return
+      await window.mcl.setInstanceVersion(selectedInstance, selectedInstalled)
+      refreshInstances()
+      setMessage('')
+    })
+
+  const onCreateInstance = () =>
+    run(async () => {
+      const name = newInstName.trim()
+      if (!name) return
+      const created = await window.mcl.createInstance({
+        name,
+        ...(newInstVersion ? { versionId: newInstVersion } : {})
+      })
+      setNewInstName('')
+      setNewInstVersion('')
+      setSelectedInstance(created.id)
+      refreshInstances()
+      setMessage('')
+    })
+
+  const onDeleteInstance = () =>
+    run(async () => {
+      const inst = selectedMeta
+      if (!inst) return
+      if (!window.confirm(`删除实例「${inst.name}（${inst.id}）」？其 mods/存档/设置将不可恢复。`)) return
+      await window.mcl.deleteInstance(inst.id)
+      refreshInstances()
       setMessage('')
     })
 
@@ -324,15 +382,15 @@ function App() {
 
   const onRemoveMod = (filename: string) =>
     run(async () => {
-      await window.mcl.removeMod(filename)
+      await window.mcl.removeMod(selectedInstance, filename)
       refreshMods()
       setMessage('')
     })
 
   const onInstallLocalMod = () =>
     run(async () => {
-      if (!modJarInput.trim()) return
-      await window.mcl.installModLocal(modJarInput.trim())
+      if (!modJarInput.trim() || !selectedInstance) return
+      await window.mcl.installModLocal(selectedInstance, modJarInput.trim())
       setModJarInput('')
       refreshMods()
       setMessage('')
@@ -371,9 +429,9 @@ function App() {
 
   return (
     <div className="app">
-      <span className="badge">M4 · 智能体操作 + Fabric</span>
+      <span className="badge">M6 · 多实例隔离 + AI 扩展</span>
       <h1>MCL</h1>
-      <p className="subtitle">AI 驱动的 Minecraft 启动器 · 离线/外置账户 + 版本/Fabric 安装 + AI 装 mod/改配置/启动</p>
+      <p className="subtitle">AI 驱动的 Minecraft 启动器 · 多实例隔离 + 版本/Fabric 安装 + AI 装 mod/写扩展/启动</p>
 
       <section className="card">
         <h2>账户</h2>
@@ -522,22 +580,63 @@ function App() {
       </section>
 
       <section className="card">
-        <h2>启动游戏</h2>
+        <h2>游戏实例（M6 · 多实例隔离）</h2>
+        <div className="row">
+          <select value={selectedInstance} onChange={(e) => setSelectedInstance(e.target.value)}>
+            <option value="">{instances.length ? '选择实例…' : '实例加载中…'}</option>
+            {instances.map((inst) => (
+              <option key={inst.id} value={inst.id}>
+                {inst.name}（{inst.id}
+                {inst.versionId ? ` · ${inst.versionId}` : ' · 未绑定版本'}）
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={onLaunch}
+            disabled={!selectedInstance || gameRunning || !account || !selectedMeta?.versionId}
+            title={!selectedMeta?.versionId ? '该实例尚未绑定版本' : `启动实例绑定的 ${selectedMeta?.versionId}`}
+          >
+            启动
+          </button>
+          <button onClick={() => window.mcl.stopGame()} disabled={!gameRunning}>
+            停止
+          </button>
+          <button
+            onClick={onDeleteInstance}
+            disabled={!selectedInstance || gameRunning}
+            title="删除选中实例（mods/存档/设置不可恢复，会先弹确认）"
+          >
+            删除
+          </button>
+        </div>
         <div className="row">
           <select value={selectedInstalled} onChange={(e) => setSelectedInstalled(e.target.value)}>
-            <option value="">选择已安装版本…</option>
+            <option value="">
+              {selectedMeta?.versionId ? `${selectedMeta.versionId}（当前绑定）` : '为实例绑定已安装版本…'}
+            </option>
             {installed.map((id) => (
               <option key={id} value={id}>
                 {id}
               </option>
             ))}
           </select>
-          <button onClick={onLaunch} disabled={!selectedInstalled || gameRunning || !account}>
-            启动
+          <button onClick={onBindVersion} disabled={!selectedInstance || !selectedInstalled}>
+            保存绑定
           </button>
-          <button onClick={() => window.mcl.stopGame()} disabled={!gameRunning}>
-            停止
+          <button
+            onClick={onInstallFabric}
+            disabled={!selectedInstalled || installing || selectedInstalled.startsWith('fabric-loader-')}
+            title={
+              selectedInstalled.startsWith('fabric-loader-')
+                ? '该版本已是 Fabric 版本'
+                : '为选中的原版版本安装最新稳定版 Fabric 加载器'
+            }
+          >
+            装 Fabric
           </button>
+        </div>
+        <div className="result">
+          每个实例有独立的 mods/存档/设置；版本与资源库全局共享，不随实例复制。
         </div>
         <div className="log" ref={logRef}>
           {gameLines.length === 0 ? '游戏日志将显示在这里…' : gameLines.map((line, i) => <div key={i}>{line}</div>)}
@@ -554,27 +653,27 @@ function App() {
           </div>
         )}
         <div className="row">
-          <button
-            onClick={onInstallFabric}
-            disabled={!selectedInstalled || installing || selectedInstalled.startsWith('fabric-loader-')}
-            title={
-              selectedInstalled.startsWith('fabric-loader-')
-                ? '该版本已是 Fabric 版本'
-                : '为选中的原版版本安装最新稳定版 Fabric 加载器'
-            }
-          >
-            装 Fabric
+          <input
+            value={newInstName}
+            onChange={(e) => setNewInstName(e.target.value)}
+            placeholder="新实例名（如 1.16.5 服务器整合）"
+          />
+          <select value={newInstVersion} onChange={(e) => setNewInstVersion(e.target.value)}>
+            <option value="">版本（可不选，稍后绑定）</option>
+            {installed.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+          <button onClick={onCreateInstance} disabled={!newInstName.trim()}>
+            创建实例
           </button>
-          <span className="result" style={{ flex: 1 }}>
-            {selectedInstalled.startsWith('fabric-loader-')
-              ? '已选 Fabric 版本，可直接启动'
-              : '为原版版本装上 Fabric 后，就能在 mods 目录使用 mod'}
-          </span>
         </div>
       </section>
 
       <section className="card">
-        <h2>Mods（instances/main/mods）</h2>
+        <h2>Mods（instances/{selectedInstance || '…'}/mods）</h2>
         <div className="row">
           <input
             value={modJarInput}

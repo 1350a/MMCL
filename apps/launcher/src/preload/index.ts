@@ -37,18 +37,28 @@ const api = {
   readGameLog: () => ipcRenderer.invoke('game:readLog'),
   isGameRunning: () => ipcRenderer.invoke('game:isRunning'),
 
+  listInstances: () => ipcRenderer.invoke('instance:list'),
+  createInstance: (input: { id?: string; name: string; versionId?: string }) =>
+    ipcRenderer.invoke('instance:create', input),
+  setInstanceVersion: (instanceId: string, versionId: string) =>
+    ipcRenderer.invoke('instance:setVersion', instanceId, versionId),
+  deleteInstance: (instanceId: string) => ipcRenderer.invoke('instance:delete', instanceId),
+
   installFabric: (gameVersion: string, loaderVersion?: string) =>
     ipcRenderer.invoke('fabric:install', gameVersion, loaderVersion),
-  listMods: () => ipcRenderer.invoke('mod:list'),
-  removeMod: (filename: string) => ipcRenderer.invoke('mod:remove', filename),
-  installModLocal: (jarPath: string) => ipcRenderer.invoke('mod:installLocal', jarPath),
-  getOptions: () => ipcRenderer.invoke('config:getOptions'),
-  setOptions: (entries: Record<string, string>) => ipcRenderer.invoke('config:setOptions', entries),
+  listMods: (instanceId: string) => ipcRenderer.invoke('mod:list', instanceId),
+  removeMod: (instanceId: string, filename: string) => ipcRenderer.invoke('mod:remove', instanceId, filename),
+  installModLocal: (instanceId: string, jarPath: string) =>
+    ipcRenderer.invoke('mod:installLocal', instanceId, jarPath),
+  getOptions: (instanceId: string) => ipcRenderer.invoke('config:getOptions', instanceId),
+  setOptions: (instanceId: string, entries: Record<string, string>) =>
+    ipcRenderer.invoke('config:setOptions', instanceId, entries),
 
   getAiConfig: () => ipcRenderer.invoke('ai:getConfig'),
   setAiConfig: (ai: { baseUrl: string; apiKey: string; model: string }) => ipcRenderer.invoke('ai:setConfig', ai),
   aiSend: (text: string) => ipcRenderer.invoke('ai:send', text),
   aiClear: () => ipcRenderer.invoke('ai:clear'),
+  aiHistory: () => ipcRenderer.invoke('ai:history'),
 
   listPanels: () => ipcRenderer.invoke('ext:listPanels'),
   panelAction: (panelId: string, action: string) => ipcRenderer.invoke('ext:panel-action', panelId, action),

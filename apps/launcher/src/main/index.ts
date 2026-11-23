@@ -90,11 +90,28 @@ function registerIpc(): void {
   ipcMain.handle('java:listRuntimes', () => service.listRuntimes())
   ipcMain.handle('java:installRuntime', (_e, major: number) => service.installRuntimeFor(major))
   ipcMain.handle('java:cancelRuntimeInstall', () => service.cancelRuntimeInstall())
-  ipcMain.handle('game:launch', (_e, id: string) => service.launchVersion(id))
+  // M6 多实例：实例清单 / 新建 / 绑定版本；game:launch 改按实例启动
+  ipcMain.handle('instance:list', () => service.listInstancesPayload())
+  ipcMain.handle('instance:create', (_e, input: { id?: string; name: string; versionId?: string }) => {
+    if (typeof input !== 'object' || input === null || typeof input.name !== 'string') {
+      throw new Error('invalid instance create params')
+    }
+    return service.createInstancePayload(input)
+  })
+  ipcMain.handle('instance:setVersion', (_e, instanceId: string, versionId: string) => {
+    if (typeof instanceId !== 'string' || typeof versionId !== 'string') throw new Error('invalid instance params')
+    return service.setInstanceVersion(instanceId, versionId)
+  })
+  ipcMain.handle('instance:delete', (_e, instanceId: string) => {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    return service.deleteInstancePayload(instanceId)
+  })
+  ipcMain.handle('game:launch', (_e, instanceId: string) => service.launchInstance(instanceId))
   ipcMain.handle('ai:getConfig', () => service.getAiConfig())
   ipcMain.handle('ai:setConfig', (_e, ai) => service.setAiConfig(ai))
   ipcMain.handle('ai:send', (_e, text: string) => service.aiSend(text))
   ipcMain.handle('ai:clear', () => service.aiClear())
+  ipcMain.handle('ai:history', () => service.aiHistoryPayload())
   // M5-4：扩展面板
   ipcMain.handle('ext:listPanels', () => service.listPanels())
   ipcMain.handle('ext:panel-action', (_e, panelId: string, action: string) => {
@@ -117,11 +134,26 @@ function registerIpc(): void {
   ipcMain.handle('fabric:install', (_e, gameVersion: string, loaderVersion?: string) =>
     service.installFabricVersion(gameVersion, loaderVersion)
   )
-  ipcMain.handle('mod:list', () => service.listModsPayload())
-  ipcMain.handle('mod:remove', (_e, filename: string) => service.removeModFile(filename))
-  ipcMain.handle('mod:installLocal', (_e, jarPath: string) => service.installModFromLocal(jarPath))
-  ipcMain.handle('config:getOptions', () => service.readGameOptions())
-  ipcMain.handle('config:setOptions', (_e, entries: Record<string, string>) => service.writeGameOptions(entries))
+  ipcMain.handle('mod:list', (_e, instanceId: string) => {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    return service.listModsPayload(instanceId)
+  })
+  ipcMain.handle('mod:remove', (_e, instanceId: string, filename: string) => {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    return service.removeModFile(instanceId, filename)
+  })
+  ipcMain.handle('mod:installLocal', (_e, instanceId: string, jarPath: string) => {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    return service.installModFromLocal(instanceId, jarPath)
+  })
+  ipcMain.handle('config:getOptions', (_e, instanceId: string) => {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    return service.readGameOptions(instanceId)
+  })
+  ipcMain.handle('config:setOptions', (_e, instanceId: string, entries: Record<string, string>) => {
+    if (typeof instanceId !== 'string' || instanceId.length === 0) throw new Error('invalid instance id')
+    return service.writeGameOptions(instanceId, entries)
+  })
 }
 
 app.whenReady().then(() => {

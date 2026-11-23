@@ -34,7 +34,7 @@ export const EXTENSION_API_DOC = `## 扩展开发指南（generate_extension）
 
 ### 能力 API 形状
 1. ai.tools —— ctx.capabilities['ai.tools'].registerTool({
-     name: 'dice_roll',                    // 全局唯一工具名
+     name: 'my.dice.roll',                 // 全局唯一！建议 <扩展id>.<工具名>，与内置 demo 或其他扩展撞名会使本扩展激活失败
      description: '掷骰子',
      parameters: { type: 'object', properties: { sides: { type: 'number' } } }, // JSON Schema
      handler(args) { return JSON.stringify({ ok: true }) }  // 可 async；必须返回 JSON 字符串
@@ -61,7 +61,7 @@ code:
 let count = 0
 export function activate(ctx) {
   ctx.capabilities['ai.tools'].registerTool({
-    name: 'dice_roll',
+    name: 'my.dice.roll',
     description: '掷骰子，参数 sides（默认 6）',
     parameters: { type: 'object', properties: { sides: { type: 'number' } } },
     handler(args) {

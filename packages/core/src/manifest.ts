@@ -5,6 +5,9 @@ import type { RuleBasedValue, VersionJson, VersionManifest, VersionManifestEntry
 export const DEFAULT_MANIFEST_URL =
   'https://launchermeta.mojang.com/mc/game/version_manifest_v2.json'
 
+/** BMCLAPI 镜像的清单端点（官方 launchermeta 被劫持/不可达时的兜底，M4 库下载同思路）。 */
+export const BMCLAPI_MANIFEST_URL = 'https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json'
+
 async function fetchText(url: string): Promise<string> {
   const res = await fetch(url)
   if (!res.ok) {
@@ -29,6 +32,22 @@ export async function fetchVersionManifest(url: string = DEFAULT_MANIFEST_URL): 
     throw new Error(`invalid version manifest from ${url}`)
   }
   return manifest
+}
+
+/** 清单拉取兜底：官方源失败（网络/劫持）即回退 BMCLAPI 镜像，两源都失败抛最后一次错误。 */
+export async function fetchVersionManifestWithFallback(
+  primaryUrl: string = DEFAULT_MANIFEST_URL,
+  fallbackUrl: string = BMCLAPI_MANIFEST_URL
+): Promise<VersionManifest> {
+  try {
+    return await fetchVersionManifest(primaryUrl)
+  } catch (primaryErr) {
+    try {
+      return await fetchVersionManifest(fallbackUrl)
+    } catch {
+      throw primaryErr
+    }
+  }
 }
 
 /** 在清单中按 id 查找版本记录。 */

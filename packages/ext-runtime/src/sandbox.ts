@@ -93,6 +93,23 @@ function requireModule(explicit?: Pick<QuickJSWASMModule, 'newContext'>): Pick<Q
   return moduleCached
 }
 
+/**
+ * asyncify 单挂起约束（quickjs-emscripten 库层）：同一 WASM 模块同一时刻只能有一个
+ * 挂起的 guest——多沙箱扩展并发初始化 / 工具互调 / 面板回调撞上即报
+ * `QuickJSAsyncifyError: Already suspended`（实测）。进程级执行锁串行化全部 guest
+ * 执行窗口（入口 eval / activate / callGuestFn）；窗口内含 asyncified 宿主调用的
+ * 悬挂与 promise 排水，均不重入锁（asyncified 宿主回调体内不执行 guest 代码）。
+ */
+let guestExecChain: Promise<unknown> = Promise.resolve()
+const withGuestExecLock = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const run = guestExecChain.then(fn)
+  guestExecChain = run.then(
+    () => undefined,
+    () => undefined
+  )
+  return run
+}
+
 type EvalResult = Awaited<ReturnType<QuickJSAsyncContext['evalCodeAsync']>>
 
 interface ToolEntry {
@@ -186,9 +203,11 @@ export async function createSandbox(
     }
   }
 
-  /** guest 代码一次性求值并取宿主值（结果句柄即用即释）。 */
+  /** guest 代码一次性求值并取宿主值（结果句柄即用即释；走执行锁）。 */
   const evalHost = async (expr: string, what: string): Promise<unknown> => {
-    const h = unwrap(await withDeadline(() => vm.evalCodeAsync(expr, 'check.js')), what)
+    const h = await withGuestExecLock(async () =>
+      unwrap(await withDeadline(() => vm.evalCodeAsync(expr, 'check.js')), what)
+    )
     try {
       return vm.dump(h)
     } finally {
@@ -274,15 +293,18 @@ export async function createSandbox(
     vm.setProp(vm.global, '__MCL_TMP_ARG__', argH)
     argH.dispose()
     try {
-      const result = unwrap(
-        await withDeadline(() =>
-          vm.evalCodeAsync('globalThis.__MCL_TMP_FN__(globalThis.__MCL_TMP_ARG__)', 'bridge-call.js')
-        ),
-        what
-      )
-      const value = await resolveToValue(result, what)
-      const out = vm.dump(value)
-      if (value !== result) value.dispose()
+      const out = await withGuestExecLock(async () => {
+        const result = unwrap(
+          await withDeadline(() =>
+            vm.evalCodeAsync('globalThis.__MCL_TMP_FN__(globalThis.__MCL_TMP_ARG__)', 'bridge-call.js')
+          ),
+          what
+        )
+        const value = await resolveToValue(result, what)
+        const dumped = vm.dump(value)
+        if (value !== result) value.dispose()
+        return dumped
+      })
       return out
     } finally {
       vm.setProp(vm.global, '__MCL_TMP_FN__', vm.undefined)
@@ -302,22 +324,26 @@ export async function createSandbox(
     vm.dispose() // context 释放时连带释放其 runtime
   }
 
-  /** 初始化期常量句柄（true/false/null 无 new* 构造 API）。 */
+  /** 初始化期常量句柄（true/false/null 无 new* 构造 API；求值走执行锁）。 */
+  const evalLocked = async (expr: string, what: string): Promise<QuickJSHandle> =>
+    withGuestExecLock(async () => unwrap(await withDeadline(() => vm.evalCodeAsync(expr, 'init.js')), what))
   const constHandles = {
-    true: vm.unwrapResult(await vm.evalCodeAsync('true', 'init.js')),
-    false: vm.unwrapResult(await vm.evalCodeAsync('false', 'init.js')),
-    null: vm.unwrapResult(await vm.evalCodeAsync('null', 'init.js'))
+    true: await evalLocked('true', '常量句柄'),
+    false: await evalLocked('false', '常量句柄'),
+    null: await evalLocked('null', '常量句柄')
   }
   retained.push(constHandles.true, constHandles.false, constHandles.null)
 
   try {
     // 执行扩展代码。入口不从 evalCode 完成值取（esbuild IIFE 产物完成值不可靠），
     // 一律从 globalThis.__MCL_ENTRY__ 读：var 声明与显式赋值都落在全局。
-    const completionValue = unwrap(
-      await withDeadline(() => vm.evalCodeAsync(options.code, 'extension.js', { type: 'global' })),
-      '扩展代码执行'
-    )
-    completionValue.dispose()
+    await withGuestExecLock(async () => {
+      const completionValue = unwrap(
+        await withDeadline(() => vm.evalCodeAsync(options.code, 'extension.js', { type: 'global' })),
+        '扩展代码执行'
+      )
+      completionValue.dispose()
+    })
     const entryCheck = await evalHost('typeof (globalThis.__MCL_ENTRY__ || {}).activate', '扩展入口检查')
     if (entryCheck !== 'function') {
       throw new Error('扩展缺少 activate(ctx) 入口（约定 globalThis.__MCL_ENTRY__ = { activate(ctx) }）')
@@ -500,17 +526,20 @@ export async function createSandbox(
 
     vm.setProp(ctxObj, 'capabilities', capsObj)
 
-    // 调 activate：guest activate 可为 async（可 await 宿主 API），走 evalCodeAsync
+    // 调 activate：guest activate 可为 async（可 await 宿主 API），走 evalCodeAsync。
+    // asyncified 宿主调用（如 mountPanel）的挂起/恢复都在这一个锁窗口内完成。
     vm.setProp(vm.global, '__MCL_TMP_ARG__', ctxObj)
     try {
-      const result = unwrap(
-        await withDeadline(() =>
-          vm.evalCodeAsync('globalThis.__MCL_ENTRY__.activate(globalThis.__MCL_TMP_ARG__)', 'activate.js')
-        ),
-        '扩展 activate 执行'
-      )
-      const value = await resolveToValue(result, '扩展 activate')
-      if (value !== result) value.dispose()
+      await withGuestExecLock(async () => {
+        const result = unwrap(
+          await withDeadline(() =>
+            vm.evalCodeAsync('globalThis.__MCL_ENTRY__.activate(globalThis.__MCL_TMP_ARG__)', 'activate.js')
+          ),
+          '扩展 activate 执行'
+        )
+        const value = await resolveToValue(result, '扩展 activate')
+        if (value !== result) value.dispose()
+      })
     } finally {
       vm.setProp(vm.global, '__MCL_TMP_ARG__', vm.undefined)
     }

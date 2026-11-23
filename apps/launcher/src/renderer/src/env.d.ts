@@ -62,6 +62,14 @@ interface GameExitPayload {
   code: number | null
 }
 
+// 游戏实例（M6 多实例）
+interface InstanceMetaPayload {
+  id: string
+  name: string
+  versionId?: string
+  createdAt?: string
+}
+
 type Unsubscribe = () => void
 
 interface RuntimeInfoPayload {
@@ -184,17 +192,23 @@ interface MclApi {
   readGameLog: () => Promise<string>
   isGameRunning: () => Promise<boolean>
 
+  listInstances: () => Promise<InstanceMetaPayload[]>
+  createInstance: (input: { id?: string; name: string; versionId?: string }) => Promise<InstanceMetaPayload>
+  setInstanceVersion: (instanceId: string, versionId: string) => Promise<InstanceMetaPayload>
+  deleteInstance: (instanceId: string) => Promise<void>
+
   installFabric: (gameVersion: string, loaderVersion?: string) => Promise<{ versionId: string }>
-  listMods: () => Promise<ModFilePayload[]>
-  removeMod: (filename: string) => Promise<void>
-  installModLocal: (jarPath: string) => Promise<string>
-  getOptions: () => Promise<OptionEntry[]>
-  setOptions: (entries: Record<string, string>) => Promise<OptionEntry[]>
+  listMods: (instanceId: string) => Promise<ModFilePayload[]>
+  removeMod: (instanceId: string, filename: string) => Promise<void>
+  installModLocal: (instanceId: string, jarPath: string) => Promise<string>
+  getOptions: (instanceId: string) => Promise<OptionEntry[]>
+  setOptions: (instanceId: string, entries: Record<string, string>) => Promise<OptionEntry[]>
 
   getAiConfig: () => Promise<AiConfigPayload>
   setAiConfig: (ai: { baseUrl: string; apiKey: string; model: string }) => Promise<AiConfigPayload>
   aiSend: (text: string) => Promise<{ content: string }>
   aiClear: () => Promise<void>
+  aiHistory: () => Promise<Array<{ role: 'user' | 'assistant'; text: string }>>
 
   listPanels: () => Promise<PanelStatePayload[]>
   panelAction: (panelId: string, action: string) => Promise<void>

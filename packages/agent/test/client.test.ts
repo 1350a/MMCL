@@ -212,4 +212,33 @@ describe('ChatSession', () => {
     session.clear()
     expect(session.size()).toBe(0)
   })
+
+  it('exportHistory / restoreHistory：落盘往返（不含 system；非法条目丢弃）', () => {
+    const session = new ChatSession('s')
+    session.addUser('问题')
+    session.addAssistant('回答')
+    const exported = session.exportHistory()
+    expect(exported).toEqual([
+      { role: 'user', content: '问题' },
+      { role: 'assistant', content: '回答' }
+    ])
+    // 导出是副本：改导出值不影响会话
+    exported[0].content = '改过'
+    expect(session.exportHistory()[0].content).toBe('问题')
+
+    const restored = new ChatSession('新 system')
+    restored.restoreHistory([
+      { role: 'user', content: '问题' },
+      { role: 'assistant', content: '回答' },
+      { role: 'system', content: '混入的 system' },
+      { role: 'tool', tool_call_id: 'x', content: '混入的 tool' },
+      { role: 'user', content: null } as unknown as { role: 'user'; content: string }
+    ])
+    expect(restored.size()).toBe(2) // system/tool/content 非字符串的条目被丢
+    expect(restored.messages()[0]).toEqual({ role: 'system', content: '新 system' })
+    expect(restored.exportHistory()).toEqual([
+      { role: 'user', content: '问题' },
+      { role: 'assistant', content: '回答' }
+    ])
+  })
 })

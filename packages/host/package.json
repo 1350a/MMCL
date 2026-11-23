@@ -18,6 +18,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@mcl/core": "workspace:*"
+  },
   "devDependencies": {
     "@mcl/agent": "workspace:*",
     "@types/node": "^22.9.0",
