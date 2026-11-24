@@ -28,7 +28,8 @@
 ## Alpha 打包（2026-11-24）
 
 - 使用 electron-builder 26.18.0 + 本机缓存的 Electron 33.4.11 打出 `win-unpacked` 便携目录，压缩为 `MMCL-0.1.0-alpha.1-win-x64.zip`。
-- 复现：根目录 `pnpm package:alpha`（输出 `.release/dist/win-unpacked`）；无网络/证书问题时追加 `-c.electronDist=<本地 Electron dist>`。
+- 复现：根目录 `pnpm package:alpha`（输出 `.release/dist/win-unpacked`）；若 pnpm 自动 install 因证书失败，用 `pnpm --config.verify-deps-before-run=false package:alpha`。
+- 打包配置复用 `apps/launcher/node_modules/electron/dist`，不联网下载 Electron；构建前确认该目录存在。
 - asar 内已包含 QuickJS wasm、esbuild 与四个 `@mcl/*` 包；M4.5 原先担心的 singlefile 变体不再必要。
 - 本轮未签名、使用默认 Electron 图标；AI 环境无法完整启动 GUI，桌面需复核启动与扩展生成。
 
