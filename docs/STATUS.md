@@ -6,7 +6,7 @@
 
 - 已完成：M1~M6；UI 重构 C1~C8；C9 收尾（清理 / 文档 / 0.2.0）已落地。
 - C8 已通过桌面启动冒烟；完整验收链（生成 → 保存 → 启用 → 重启保持 → 停用 → 卸载）建议最终复核。
-- 下一步：M4.5 发布准备（electron-builder 打包；asar 需 QuickJS singlefile 变体）。
+- 下一步：M4.5 发布准备（electron-builder 已跑通，产出 0.1.0-alpha.1 便携包；后续补图标 / 签名 / 安装器）。
 - 之后候选：微软正版登录、更新服务器 / 自更新、Modrinth 搜索 UI。
 
 ## C8 插件页（2026-11-24 实现）
@@ -25,6 +25,13 @@
 - 六个 `package.json` 统一 `0.1.0 → 0.2.0`；未打 git tag。
 - 文档：AGENTS 只保留规范；README / CONTEXT / DESIGN / UI-DESIGN 指向本文件，不复制状态。
 
+## Alpha 打包（2026-11-24）
+
+- 使用 electron-builder 26.18.0 + 本机缓存的 Electron 33.4.11 打出 `win-unpacked` 便携目录，压缩为 `MMCL-0.1.0-alpha.1-win-x64.zip`。
+- 复现：根目录 `pnpm package:alpha`（输出 `.release/dist/win-unpacked`）；无网络/证书问题时追加 `-c.electronDist=<本地 Electron dist>`。
+- asar 内已包含 QuickJS wasm、esbuild 与四个 `@mcl/*` 包；M4.5 原先担心的 singlefile 变体不再必要。
+- 本轮未签名、使用默认 Electron 图标；AI 环境无法完整启动 GUI，桌面需复核启动与扩展生成。
+
 ## 验证
 
 - typecheck：6/6 通过（2026-11-24，AI 环境，bundled tsc --noEmit；C9 清理后复跑）。
@@ -33,7 +40,7 @@
 
 ## 版本
 
-- 当前：0.2.0（6 个 package.json lockstep；`@mcl/app` 为产品版本）。
+- 当前：0.1.0-alpha.1（6 个 package.json lockstep；`@mcl/app` 为产品版本；alpha 预发布）。
 - 下一里程碑：M4.5 首个可分发版本再定 0.5.0 / 1.0.0。
 - git tag：无。
 
@@ -46,6 +53,7 @@
 
 ## 最近变更
 
+- 2026-11-24：alpha 打包——electron-builder + 本地 Electron 33.4.11 产出 0.1.0-alpha.1 便携包；六包版本由 0.2.0 改为 0.1.0-alpha.1。
 - 2026-11-24：C9 收尾——删除 6 个孤儿卡片与 3 段死 CSS，六包版本统一 0.2.0。
 - 2026-11-24：C8 插件页落地——取消待审提案，改为生成即保存、默认不装载、手动启停 + 设置自动加载；六 IPC 通道；ExtensionsPage。
 - 2026-11-24：文档体系调整——AGENTS 只保留规范，新增 STATUS 作为唯一状态源；README / CONTEXT / DESIGN / UI-DESIGN 改为指针。
