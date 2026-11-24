@@ -1,6 +1,6 @@
 {
   "name": "@mcl/host",
-  "version": "0.2.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "MMCL 组件宿主（ComponentHost）：manifest 能力声明 + 宿主强制授予 + 协效应重评估 + 卸载回滚（DESIGN.md §5.3）。纯 TS，不依赖 Electron。",
   "license": "ISC",

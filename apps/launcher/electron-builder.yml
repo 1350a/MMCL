@@ -1,0 +1,15 @@
+# alpha 便携包：electron-builder --projectDir apps/launcher --config electron-builder.yml --dir
+# 本机 Electron 已安装时可直接复用；无网络/证书问题时追加：
+#   -c.electronDist=<path-to-electron/dist>
+appId: com.mmcl.launcher
+productName: MMCL
+copyright: Copyright © 2026 MMCL
+directories:
+  output: ../../.release/dist
+files:
+  - out/**/*
+  - package.json
+asar: true
+win:
+  target:
+    - dir

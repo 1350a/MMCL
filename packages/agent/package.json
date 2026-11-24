@@ -1,6 +1,6 @@
 {
   "name": "@mcl/agent",
-  "version": "0.2.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "MMCL AI 层：OpenAI 兼容协议适配（HTTP+SSE 自实现）、工具、会话。纯 TS，不依赖 Electron。",
   "license": "ISC",
