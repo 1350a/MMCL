@@ -1,6 +1,6 @@
 {
   "name": "@mcl/ext-runtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "MMCL 扩展沙箱运行时：QuickJS（WASM）隔离执行扩展代码，宿主注入能力 API，CPU 时间片 + 内存限制（DESIGN.md §5.3）。纯 TS，不依赖 Electron。",
   "license": "ISC",

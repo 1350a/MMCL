@@ -1,6 +1,6 @@
 {
   "name": "mcl",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "AI 驱动的 Minecraft Java 第三方启动器（ISC）",
   "license": "ISC",

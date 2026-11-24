@@ -1,6 +1,6 @@
 {
   "name": "@mcl/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "MMCL 核心库：下载、校验（后续：版本、账户、启动）。纯 TS，不依赖 Electron。",
   "license": "ISC",

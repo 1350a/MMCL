@@ -1,6 +1,6 @@
 {
   "name": "@mcl/app",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "MMCL 桌面壳（Electron）：薄主进程 + preload + React UI",
   "license": "ISC",
