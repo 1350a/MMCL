@@ -26,7 +26,7 @@ export interface AiToolsDeps {
   removeModFile(instanceId: string, filename: string): Promise<void>
   readGameOptions(instanceId: string): Promise<Array<{ key: string; value: string }>>
   writeGameOptions(instanceId: string, entries: Record<string, string>): Promise<Array<{ key: string; value: string }>>
-  /** 提交扩展提案（M5-5：一致性检查 → 待审核槽，用户批准才装载）。 */
+  /** 提交扩展（C8：一致性检查 → 保存；默认不装载，用户手动启用）。 */
   submitExtensionProposal(manifest: unknown, code: string): Promise<SubmitResult>
 }
 
@@ -311,7 +311,7 @@ function buildTools(deps: AiToolsDeps): AiTool[] {
     {
       name: 'generate_extension',
       description:
-        '提交一个启动器扩展提案（manifest + TypeScript 源码）。经静态一致性检查后进入人工审核卡，用户批准才装载生效；校验失败或被拒时错误信息会返回，修正后可重新提交。产出规范见系统提示的「扩展开发指南」。',
+        '提交并保存一个启动器扩展（manifest + TypeScript 源码）。经静态一致性检查后写入扩展目录；默认不装载，用户需在插件页手动启用（设置开启自动加载时立即生效）。校验失败时错误信息会返回，修正后可重新提交。产出规范见系统提示的「扩展开发指南」。',
       parameters: {
         type: 'object',
         properties: {

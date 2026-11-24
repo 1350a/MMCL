@@ -21,6 +21,11 @@ export interface UiPrefs {
   aiDisabled?: boolean
 }
 
+/** 扩展偏好：AI 生成的扩展是否自动装载（默认关，需在插件页手动启用）。 */
+export interface ExtensionsConfig {
+  autoLoadGenerated?: boolean
+}
+
 /** 全局配置：.mmcl\mmcl.json（UI-DESIGN.md §3/§4）。 */
 export interface MmclConfig {
   /** 版本隔离全局策略（五选，默认「全部开启」；每版本可覆盖）。 */
@@ -43,6 +48,8 @@ export interface MmclConfig {
   downloadSource?: 'official' | 'bmclapi'
   /** UI 偏好。 */
   ui?: UiPrefs
+  /** 扩展偏好。 */
+  extensions?: ExtensionsConfig
 }
 
 /** 默认配置（损坏/缺失时以此重置）。 */
@@ -51,7 +58,8 @@ export function defaultConfig(): MmclConfig {
     isolationStrategy: 'all',
     updates: 'notify',
     autoCleanupVersions: true,
-    downloadSource: 'official'
+    downloadSource: 'official',
+    extensions: { autoLoadGenerated: false }
   }
 }
 

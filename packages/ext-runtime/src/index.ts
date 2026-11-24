@@ -24,7 +24,7 @@ export { ExtensionPipeline } from './pipeline'
 export type {
   ExtensionPipelineDeps,
   ExtensionSummary,
-  PendingExtension,
+  LoadInstalledResult,
   SubmitResult
 } from './pipeline'
 export { EXTENSION_API_DOC } from './docs'

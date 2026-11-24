@@ -1,7 +1,7 @@
 export { VERSION } from './version-constants'
 
 export { defaultConfig, loadConfig, saveConfig } from './config'
-export type { AiConfig, MmclConfig, UiPrefs, UpdateMode } from './config'
+export type { AiConfig, ExtensionsConfig, MmclConfig, UiPrefs, UpdateMode } from './config'
 
 export {
   assertDirWritable,

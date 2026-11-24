@@ -12,7 +12,7 @@ import { ErrorDialog } from './components/dialogs/ErrorDialog'
 import { GameLogDialog } from './components/dialogs/GameLogDialog'
 import { VersionSettingsDialog } from './components/dialogs/VersionSettingsDialog'
 import { NewInstanceDialog } from './components/dialogs/NewInstanceDialog'
-import { PlaceholderPage } from './components/pages/PlaceholderPage'
+import { ExtensionsPage } from './components/pages/ExtensionsPage'
 import { DownloadPage } from './components/pages/DownloadPage'
 import { SettingsPage } from './components/pages/SettingsPage'
 import { NavigationProvider, useNavigation } from './state/AppState'
@@ -181,7 +181,7 @@ function LauncherShell() {
                 gameRoot={gameRoot}
               />
             )}
-            {page === 'extensions' && <PlaceholderPage title="插件" note="扩展审核与管理将在 C8 接入" />}
+            {page === 'extensions' && <ExtensionsPage ext={ext} run={run} />}
             {page === 'settings' && (
               <SettingsPage
                 java={java}

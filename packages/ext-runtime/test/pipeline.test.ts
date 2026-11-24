@@ -13,7 +13,7 @@ import {
 } from '../src'
 import type { ExtensionSummary } from '../src'
 
-/** 合法提案源码：bracket 形态访问 ai.tools（与静态扫描形态一致）。 */
+/** 合法扩展源码：bracket 形态访问 ai.tools（与静态扫描形态一致）。 */
 const GREET_CODE = `export function activate(ctx) {
   ctx.capabilities['ai.tools'].registerTool({
     name: 'greet_tool',
@@ -85,21 +85,25 @@ async function waitFor(desc: string, fn: () => boolean, timeoutMs = 5000): Promi
 }
 
 const byId = (list: ExtensionSummary[], id: string): ExtensionSummary | undefined => list.find((e) => e.id === id)
+const marker = (dir: string): boolean => existsSync(join(dir, '.disabled'))
 
 describe('ExtensionPipeline.submit', () => {
   it('结构校验拒绝：非法 id / builtin. 前缀 / sandbox.demo 占用 / 空 code', async () => {
-    const { pipeline } = await makeScope('reject-structure')
+    const { pipeline, extensionsDir } = await makeScope('reject-structure')
     await expect(pipeline.submit({ id: 'bad id!', name: 'x', capabilities: ['ai.tools'] }, GREET_CODE)).rejects.toThrow(
       /manifest\.id 非法/
     )
     await expect(pipeline.submit({ ...manifestOf('builtin.evil', '0.1.0') }, GREET_CODE)).rejects.toThrow(/builtin\. 开头/)
-    await expect(pipeline.submit({ ...manifestOf('sandbox.demo', '0.1.0') }, GREET_CODE)).rejects.toThrow(/sandbox\.demo 被内置示例扩展占用/)
+    await expect(pipeline.submit({ ...manifestOf('sandbox.demo', '0.1.0') }, GREET_CODE)).rejects.toThrow(
+      /sandbox\.demo 被内置示例扩展占用/
+    )
     await expect(pipeline.submit(manifestOf('my.empty', '0.1.0'), '   ')).rejects.toThrow(/code 不能为空/)
-    expect(pipeline.getPending()).toBeNull()
+    expect(pipeline.list()).toEqual([])
+    expect(existsSync(join(extensionsDir, 'my.empty'))).toBe(false)
   })
 
-  it('一致性失败拒绝（undeclared / unused），错误可读且不入槽', async () => {
-    const { pipeline } = await makeScope('reject-consistency')
+  it('一致性失败拒绝（undeclared / unused），错误可读且不落盘', async () => {
+    const { pipeline, extensionsDir } = await makeScope('reject-consistency')
     await expect(
       pipeline.submit(
         manifestOf('my.mismatch', '0.1.0'),
@@ -112,109 +116,108 @@ describe('ExtensionPipeline.submit', () => {
         GREET_CODE
       )
     ).rejects.toThrow(/声明了但源码未访问的能力：ui\.panel/)
-    expect(pipeline.getPending()).toBeNull()
+    expect(pipeline.list()).toEqual([])
+    expect(existsSync(join(extensionsDir, 'my.mismatch'))).toBe(false)
   })
 
-  it('语法错误拒绝（esbuild 试打包），不入槽', async () => {
-    const { pipeline } = await makeScope('reject-syntax')
-    // 能力访问与声明一致（过一致性检查），但代码本身语法错误 → 打包期拒绝
+  it('语法错误拒绝（esbuild 试打包），不落盘', async () => {
+    const { pipeline, extensionsDir } = await makeScope('reject-syntax')
     const broken = `export function activate(ctx) {
   ctx.capabilities['ai.tools'].registerTool(tool)
   this is not js
 }`
     await expect(pipeline.submit(manifestOf('my.broken', '0.1.0'), broken)).rejects.toThrow(/扩展打包失败/)
-    expect(pipeline.getPending()).toBeNull()
+    expect(pipeline.list()).toEqual([])
+    expect(existsSync(join(extensionsDir, 'my.broken'))).toBe(false)
   })
 
-  it('合法提案入槽并通知 event:ext-pending；槽占用即拒', async () => {
-    const { pipeline } = await makeScope('slot')
+  it('默认生成即保存但不装载：落盘 + .disabled 标记 + 清单 disabled', async () => {
+    const { pipeline, host, extensionsDir, events } = await makeScope('save-only')
     const result = await pipeline.submit(manifestOf('my.first', '0.1.0'), GREET_CODE)
     expect(result.ok).toBe(true)
-    expect(pipeline.getPending()?.manifest.id).toBe('my.first')
-    expect(pipeline.getPending()?.code).toBe(GREET_CODE)
-    expect(pipeline.list()).toEqual([]) // 未 approve 不注册
-    await expect(pipeline.submit(manifestOf('my.second', '0.1.0'), GREET_CODE)).rejects.toThrow(/已有待审核的扩展提案（my\.first）/)
+    expect(result.message).toContain('未加载')
+
+    const dir = join(extensionsDir, 'my.first')
+    expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))).toMatchObject({
+      id: 'my.first',
+      version: '0.1.0'
+    })
+    expect(await readFile(join(dir, 'index.ts'), 'utf8')).toBe(GREET_CODE)
+    expect(marker(dir)).toBe(true)
+    expect(byId(pipeline.list(), 'my.first')).toMatchObject({ state: 'disabled', enabled: false })
+    expect(host.listComponents().some((c) => c.id === 'my.first')).toBe(false)
+
+    const changes = events.filter((e) => e.channel === 'event:ext-list-changed')
+    expect(changes.length).toBeGreaterThan(0)
+    expect((changes.at(-1)?.payload as ExtensionSummary[])[0]).toMatchObject({ id: 'my.first', enabled: false })
+
+    // 无待审槽：可连续提交第二个扩展
+    await pipeline.submit(manifestOf('my.second', '0.1.0'), GREET_CODE)
+    expect(pipeline.list()).toHaveLength(2)
+  })
+
+  it('autoLoad=true 时立即注册并移除 .disabled；工具经沙箱异步注册后可见', async () => {
+    const { pipeline, host, extensionsDir } = await makeScope('auto-load')
+    await pipeline.submit(manifestOf('my.greet', '0.1.0'), GREET_CODE, { autoLoad: true })
+    const dir = join(extensionsDir, 'my.greet')
+    expect(marker(dir)).toBe(false)
+    expect(byId(pipeline.list(), 'my.greet')).toMatchObject({ enabled: true, state: 'active' })
+    await waitFor('greet_tool 注册', () => host.getTools().some((t) => t.name === 'greet_tool'))
+    expect(JSON.parse(await host.getTools()[0].handler({ who: 'MCL' }))).toEqual({ hello: 'MCL' })
   })
 })
 
-describe('ExtensionPipeline.approve / reject', () => {
-  it('无提案时 approve/reject 报错', async () => {
-    const { pipeline } = await makeScope('no-pending')
-    await expect(pipeline.approve()).rejects.toThrow(/没有待审核的扩展提案/)
-    expect(() => pipeline.reject()).toThrow(/没有待审核的扩展提案/)
+describe('ExtensionPipeline.enable / disable', () => {
+  it('启用已保存扩展 → 注册；停用 → 注销 + 标记；可再次启用', async () => {
+    const { pipeline, host, extensionsDir } = await makeScope('toggle-flow')
+    const dir = join(extensionsDir, 'my.toggle')
+    await pipeline.submit(manifestOf('my.toggle', '0.1.0'), GREET_CODE)
+    expect(byId(pipeline.list(), 'my.toggle')?.enabled).toBe(false)
+
+    await pipeline.enable('my.toggle')
+    expect(byId(pipeline.list(), 'my.toggle')?.enabled).toBe(true)
+    expect(marker(dir)).toBe(false)
+    await waitFor('启用后工具注册', () => host.getTools().some((t) => t.name === 'greet_tool'))
+
+    await pipeline.disable('my.toggle')
+    expect(byId(pipeline.list(), 'my.toggle')).toMatchObject({ state: 'disabled', enabled: false })
+    expect(marker(dir)).toBe(true)
+    expect(host.getTools().some((t) => t.name === 'greet_tool')).toBe(false)
+
+    await pipeline.enable('my.toggle')
+    await waitFor('再次启用后工具注册', () => host.getTools().some((t) => t.name === 'greet_tool'))
   })
 
-  it('reject 清槽零残留（未落盘未注册），可再次提交', async () => {
-    const { pipeline, extensionsDir, events } = await makeScope('reject-flow')
-    await pipeline.submit(manifestOf('my.rejected', '0.1.0'), GREET_CODE)
-    const rejected = pipeline.reject()
-    expect(rejected.ok).toBe(true)
-    expect(pipeline.getPending()).toBeNull()
-    expect(existsSync(join(extensionsDir, 'my.rejected'))).toBe(false)
-    expect(pipeline.list()).toEqual([])
-    await pipeline.submit(manifestOf('my.rejected', '0.1.0'), GREET_CODE) // 清槽后可再提交
-    expect(pipeline.getPending()?.manifest.id).toBe('my.rejected')
-    expect(events.some((e) => e.channel === 'event:ext-pending' && e.payload !== null)).toBe(true)
-    expect(events.some((e) => e.channel === 'event:ext-pending' && e.payload === null)).toBe(true)
+  it('未安装 id / 非法 id 拒绝启用与停用', async () => {
+    const { pipeline } = await makeScope('toggle-guard')
+    await expect(pipeline.enable('my.never')).rejects.toThrow(/my\.never 未安装/)
+    await expect(pipeline.disable('my.never')).rejects.toThrow(/my\.never 未安装/)
+    await expect(pipeline.enable('')).rejects.toThrow(/invalid extension id/)
+    await expect(pipeline.disable('')).rejects.toThrow(/invalid extension id/)
   })
+})
 
-  it('并发初始化两个沙箱扩展：asyncify 单挂起约束下都能激活（回归：Already suspended）', async () => {
-    const { pipeline, host } = await makeScope('concurrent-init')
-    const code = (toolName: string) => `export async function activate(ctx) {
-  ctx.capabilities['ai.tools'].registerTool({
-    name: '${toolName}', description: 'd',
-    parameters: { type: 'object', properties: {} },
-    handler() { return '{}' }
-  })
-  ctx.capabilities['ui.panel'].mountPanel(
-    { title: '${toolName}', items: [{ type: 'text', content: 'hi' }] },
-    function () {}
-  )
-}`
-    // 两次 approve 背靠背：a1 的沙箱初始化是 fire-and-forget，a2 的初始化与之并发
-    await pipeline.submit({ ...manifestOf('my.a1', '0.1.0'), capabilities: ['ai.tools', 'ui.panel'] }, code('tool_a1'))
-    await pipeline.approve()
-    await pipeline.submit({ ...manifestOf('my.a2', '0.1.0'), capabilities: ['ai.tools', 'ui.panel'] }, code('tool_a2'))
-    await pipeline.approve()
-    await waitFor('两个工具都注册', () => host.getTools().filter((t) => t.name.startsWith('tool_')).length === 2)
-    expect(host.getTools().map((t) => t.name).sort()).toEqual(['tool_a1', 'tool_a2'])
-  })
+describe('ExtensionPipeline.loadInstalled', () => {
+  it('启动恢复：无标记的装载，有 .disabled 的只登记不装载', async () => {
+    const { pipeline, extensionsDir } = await makeScope('load-installed')
+    await pipeline.submit(manifestOf('my.off', '0.1.0'), GREET_CODE)
+    await pipeline.submit(manifestOf('my.on', '0.1.0'), GREET_CODE_V2, { autoLoad: true })
 
-  it('approve 落盘 + 注册 + 工具可见 + event:ext-list-changed（端到端真沙箱）', async () => {
-    const { pipeline, host, extensionsDir } = await makeScope('approve-flow')
-    await pipeline.submit(manifestOf('my.greet', '0.1.0'), GREET_CODE)
-    const approved = await pipeline.approve()
-    expect(approved.ok).toBe(true)
-
-    // 落盘：manifest.json + index.ts，内容与提案一致
-    const dir = join(extensionsDir, 'my.greet')
-    expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))).toMatchObject({ id: 'my.greet', version: '0.1.0' })
-    expect(await readFile(join(dir, 'index.ts'), 'utf8')).toBe(GREET_CODE)
-
-    // 注册且激活；工具经沙箱异步注册后可见
-    const summary = byId(pipeline.list(), 'my.greet')
-    expect(summary?.state).toBe('active')
-    await waitFor('greet_tool 注册', () => host.getTools().some((t) => t.name === 'greet_tool'))
-    expect(JSON.parse(await host.getTools()[0].handler({ who: 'MCL' }))).toEqual({ hello: 'MCL' })
-
-    // 清槽 + 清单推送
-    expect(pipeline.getPending()).toBeNull()
-    expect(host.listComponents().map((c) => c.id)).toContain('my.greet')
-  })
-
-  it('更新语义：同 id 提交 v0.2.0 → approve 先注销旧版再注册新版', async () => {
-    const { pipeline, host } = await makeScope('update-flow')
-    await pipeline.submit(manifestOf('my.greet', '0.1.0'), GREET_CODE)
-    await pipeline.approve()
-    await waitFor('v1 工具注册', () => host.getTools().some((t) => t.name === 'greet_tool'))
-
-    await pipeline.submit(manifestOf('my.greet', '0.2.0'), GREET_CODE_V2)
-    await pipeline.approve()
-    const entries = host.listComponents().filter((c) => c.id === 'my.greet')
-    expect(entries).toHaveLength(1)
-    expect(entries[0].manifest.version).toBe('0.2.0')
-    await waitFor('v2 工具替换', () => host.getTools().some((t) => t.name === 'greet_tool_v2'))
-    expect(host.getTools().some((t) => t.name === 'greet_tool')).toBe(false) // 旧工具不残留
+    const events: Array<{ channel: string; payload: unknown }> = []
+    const notify = (channel: string, payload: unknown): void => {
+      events.push({ channel, payload })
+    }
+    const host = new ComponentHost({
+      providers: createCapabilityProviders({
+        send: notify,
+        instanceDirFor: (id) => join(root, 'load-installed', 'instances', id)
+      }).providers
+    })
+    const second = new ExtensionPipeline({ extensionsDir, host, notify })
+    const result = await second.loadInstalled()
+    expect(result).toMatchObject({ loaded: 1, disabled: 1, errors: [] })
+    expect(byId(second.list(), 'my.on')?.enabled).toBe(true)
+    expect(byId(second.list(), 'my.off')?.enabled).toBe(false)
   })
 })
 
@@ -234,20 +237,23 @@ describe('ExtensionPipeline.remove', () => {
 }`
     await pipeline.submit(
       { ...manifestOf('my.panel', '0.1.0'), capabilities: ['ai.tools', 'ui.panel'] },
-      panelCode
+      panelCode,
+      { autoLoad: true }
     )
-    await pipeline.approve()
-    expect(byId(pipeline.list(), 'my.panel')?.state).toBe('active')
+    expect(byId(pipeline.list(), 'my.panel')?.enabled).toBe(true)
     await waitFor('panel_tool 注册', () => host.getTools().some((t) => t.name === 'panel_tool'))
 
     const removed = await pipeline.remove('my.panel')
     expect(removed.ok).toBe(true)
-    expect(byId(pipeline.list(), 'my.panel')).toBeUndefined() // 清单消失
-    expect(host.getTools().some((t) => t.name === 'panel_tool')).toBe(false) // 工具回滚
-    expect(existsSync(join(extensionsDir, 'my.panel'))).toBe(false) // 目录删除
+    expect(byId(pipeline.list(), 'my.panel')).toBeUndefined()
+    expect(host.getTools().some((t) => t.name === 'panel_tool')).toBe(false)
+    expect(existsSync(join(extensionsDir, 'my.panel'))).toBe(false)
 
-    await pipeline.submit({ ...manifestOf('my.panel', '0.1.1'), capabilities: ['ai.tools', 'ui.panel'] }, panelCode) // 卸载后可重装
-    await pipeline.approve()
+    await pipeline.submit(
+      { ...manifestOf('my.panel', '0.1.1'), capabilities: ['ai.tools', 'ui.panel'] },
+      panelCode,
+      { autoLoad: true }
+    )
     await waitFor('重装后工具注册', () => host.getTools().some((t) => t.name === 'panel_tool'))
   })
 
@@ -261,20 +267,22 @@ describe('ExtensionPipeline.remove', () => {
 }`
     await pipeline.submit(
       { ...manifestOf('my.panel2', '0.1.0'), capabilities: ['ui.panel'] },
-      panelCode
+      panelCode,
+      { autoLoad: true }
     )
-    await pipeline.approve()
-    await waitFor('面板挂载', () => events.some((e) => e.channel === 'event:panel-changed' && (e.payload as unknown[]).length > 0))
+    await waitFor('面板挂载', () =>
+      events.some((e) => e.channel === 'event:panel-changed' && (e.payload as unknown[]).length > 0)
+    )
 
     await pipeline.remove('my.panel2')
     expect(events.some((e) => e.channel === 'event:panel-changed' && (e.payload as unknown[]).length === 0)).toBe(true)
   })
 
-  it('未注册 id / 非法 id 拒绝', async () => {
+  it('未安装 id / 非法 id / builtin 前缀拒绝', async () => {
     const { pipeline } = await makeScope('remove-guard')
-    await expect(pipeline.remove('my.never')).rejects.toThrow(/my\.never 未注册/)
+    await expect(pipeline.remove('my.never')).rejects.toThrow(/my\.never 未安装/)
     await expect(pipeline.remove('')).rejects.toThrow(/invalid extension id/)
-    await expect(pipeline.remove('builtin.ai-tools')).rejects.toThrow(/builtin\.ai-tools 未注册/) // 内建组件不进管理面
+    await expect(pipeline.remove('builtin.ai-tools')).rejects.toThrow(/builtin\.ai-tools 未安装/)
   })
 })
 

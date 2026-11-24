@@ -1,6 +1,6 @@
 import type { useExtensions } from '../hooks/useExtensions'
 
-/** 扩展管理卡（M5-5/6）：已装载扩展列表与移除。 */
+/** 扩展管理卡（C8）：已安装扩展列表；启用/停用/移除。 */
 export function ExtManageCard({ vm }: { vm: ReturnType<typeof useExtensions> }) {
   return (
     <section className="card">
@@ -11,8 +11,12 @@ export function ExtManageCard({ vm }: { vm: ReturnType<typeof useExtensions> }) 
             <div className="row">
               <span style={{ flex: 1 }}>
                 <b>{e.id}</b> · {e.name}
-                {e.version ? ` · v${e.version}` : ''}（{e.state === 'active' ? '运行中' : '已停用'}）
+                {e.version ? ` · v${e.version}` : ''}（
+                {e.enabled ? (e.state === 'active' ? '运行中' : '待激活') : '未加载'}）
               </span>
+              <button onClick={() => (e.enabled ? vm.onDisableExt(e.id) : vm.onEnableExt(e.id))}>
+                {e.enabled ? '停用' : '启用'}
+              </button>
               <button onClick={() => vm.onRemoveExt(e.id)}>移除</button>
             </div>
             <div className="ext-chips">
@@ -31,7 +35,7 @@ export function ExtManageCard({ vm }: { vm: ReturnType<typeof useExtensions> }) 
           </div>
         ))
       ) : (
-        <div className="result">（无扩展——对 AI 说「帮我写一个扩展」来生成，批准后在这里管理）</div>
+        <div className="result">（无扩展——对 AI 说「帮我写一个扩展」，生成后在插件页启用）</div>
       )}
     </section>
   )

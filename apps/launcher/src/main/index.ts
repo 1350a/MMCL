@@ -209,10 +209,15 @@ function registerIpc(service: LauncherService): void {
     if (typeof panelId !== 'string' || typeof action !== 'string') throw new Error('invalid panel action params')
     return service.panelAction(panelId, action)
   })
-  // M5-5/6：扩展审核与管理（AI 提案 → 审核 → 热装载/卸载）
-  ipcMain.handle('ext:pending', () => service.extPending())
-  ipcMain.handle('ext:approve', () => service.extApprove())
-  ipcMain.handle('ext:reject', () => service.extReject())
+  // C8：扩展管理（生成即保存；默认不装载，启用/停用热切换）
+  ipcMain.handle('ext:enable', (_e, id: string) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('invalid extension id')
+    return service.extEnable(id)
+  })
+  ipcMain.handle('ext:disable', (_e, id: string) => {
+    if (typeof id !== 'string' || id.length === 0) throw new Error('invalid extension id')
+    return service.extDisable(id)
+  })
   ipcMain.handle('ext:list', () => service.extList())
   ipcMain.handle('ext:remove', (_e, id: string) => {
     if (typeof id !== 'string' || id.length === 0) throw new Error('invalid extension id')

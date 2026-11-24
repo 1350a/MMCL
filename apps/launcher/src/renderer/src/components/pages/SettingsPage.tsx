@@ -301,6 +301,21 @@ export function SettingsPage({
               </section>
 
               <section className="card">
+                <h2>扩展</h2>
+                <div className="settings-toggle">
+                  <div className="settings-toggle-main">
+                    <div className="settings-toggle-label">AI 生成的扩展自动加载</div>
+                    <div className="settings-toggle-sub">关闭时生成后只保存，需到插件页手动启用</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={config.extensions?.autoLoadGenerated === true}
+                    onChange={(e) => saveConfig({ extensions: { autoLoadGenerated: e.target.checked } })}
+                  />
+                </div>
+              </section>
+
+              <section className="card">
                 <h2>更新检查</h2>
                 <div className="settings-field">
                   <select

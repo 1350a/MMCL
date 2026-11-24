@@ -4,8 +4,8 @@
  */
 export const EXTENSION_API_DOC = `## 扩展开发指南（generate_extension）
 
-用户请你写启动器扩展时，调用 generate_extension 提交（manifest + code）。提交后进入人工审核卡，
-用户批准才装载生效；被拒或校验失败时错误信息会返回给你，修正后可重新提交。
+用户请你写启动器扩展时，调用 generate_extension 提交（manifest + code）。提交并通过静态检查后会保存到扩展目录；
+默认不装载，用户需在插件页手动启用（设置开启「自动加载」时立即生效）。校验失败时错误信息会返回给你，修正后可重新提交。
 
 ### manifest 格式（generate_extension 的 manifest 参数）
 {

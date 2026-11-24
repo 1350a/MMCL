@@ -154,20 +154,7 @@ interface PanelStatePayload {
   items: PanelItemPayload[]
 }
 
-// 扩展审核/管理（M5-5/6）
-interface PendingExtensionPayload {
-  manifest: {
-    id: string
-    name: string
-    version?: string
-    capabilities: string[]
-    requires?: string[]
-    fsInstances?: string[]
-    netDomains?: string[]
-  }
-  code: string
-}
-
+// 扩展管理（C8）：生成即保存，默认不装载
 interface ExtensionSummaryPayload {
   id: string
   name: string
@@ -175,7 +162,8 @@ interface ExtensionSummaryPayload {
   capabilities: string[]
   fsInstances?: string[]
   netDomains?: string[]
-  state: 'active' | 'inactive'
+  state: 'active' | 'inactive' | 'disabled'
+  enabled: boolean
 }
 
 interface SubmitResultPayload {
@@ -206,6 +194,7 @@ interface ConfigPayload {
   autoCleanupVersions?: boolean
   downloadSource?: 'official' | 'bmclapi'
   ui?: UiPrefsPayload
+  extensions?: { autoLoadGenerated?: boolean }
 }
 
 /** 可修改的配置子集（javaPath 空串 = 清除手动路径；ui.backgroundPath 空串 = 清除自定义背景）。 */
@@ -216,6 +205,7 @@ interface ConfigPatchPayload {
   autoCleanupVersions?: boolean
   downloadSource?: 'official' | 'bmclapi'
   ui?: UiPrefsPayload
+  extensions?: { autoLoadGenerated?: boolean }
 }
 
 /** Splash 管线进度（UI-DESIGN.md §5）。 */
@@ -303,9 +293,8 @@ interface MclApi {
   listPanels: () => Promise<PanelStatePayload[]>
   panelAction: (panelId: string, action: string) => Promise<void>
 
-  extPending: () => Promise<PendingExtensionPayload | null>
-  extApprove: () => Promise<SubmitResultPayload>
-  extReject: () => Promise<SubmitResultPayload>
+  extEnable: (id: string) => Promise<SubmitResultPayload>
+  extDisable: (id: string) => Promise<SubmitResultPayload>
   extList: () => Promise<ExtensionSummaryPayload[]>
   extRemove: (id: string) => Promise<SubmitResultPayload>
 
@@ -333,7 +322,6 @@ interface MclApi {
   onAiDone: (callback: (payload: AiDonePayload) => void) => Unsubscribe
   onAiError: (callback: (payload: AiErrorPayload) => void) => Unsubscribe
   onPanelChanged: (callback: (payload: PanelStatePayload[]) => void) => Unsubscribe
-  onExtPending: (callback: (payload: PendingExtensionPayload | null) => void) => Unsubscribe
   onExtListChanged: (callback: (payload: ExtensionSummaryPayload[]) => void) => Unsubscribe
 }
 

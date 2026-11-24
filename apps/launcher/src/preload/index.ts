@@ -77,9 +77,8 @@ const api = {
   listPanels: () => ipcRenderer.invoke('ext:listPanels'),
   panelAction: (panelId: string, action: string) => ipcRenderer.invoke('ext:panel-action', panelId, action),
 
-  extPending: () => ipcRenderer.invoke('ext:pending'),
-  extApprove: () => ipcRenderer.invoke('ext:approve'),
-  extReject: () => ipcRenderer.invoke('ext:reject'),
+  extEnable: (id: string) => ipcRenderer.invoke('ext:enable', id),
+  extDisable: (id: string) => ipcRenderer.invoke('ext:disable', id),
   extList: () => ipcRenderer.invoke('ext:list'),
   extRemove: (id: string) => ipcRenderer.invoke('ext:remove', id),
 
@@ -110,7 +109,6 @@ const api = {
   onAiDone: on('event:ai-done'),
   onAiError: on('event:ai-error'),
   onPanelChanged: on('event:panel-changed'),
-  onExtPending: on('event:ext-pending'),
   onExtListChanged: on('event:ext-list-changed')
 }
 

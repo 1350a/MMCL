@@ -57,6 +57,7 @@ import {
 import type {
   Account,
   AuthenticateResponse,
+  ExtensionsConfig,
   InstanceMeta,
   IsolationFacts,
   IsolationStrategy,
@@ -83,10 +84,9 @@ import {
   ensureDemoExtension,
   ExtensionPipeline,
   EXTENSION_API_DOC,
-  initExtRuntime,
-  scanExtensions
+  initExtRuntime
 } from '@mcl/ext-runtime'
-import type { CapabilityRuntime, ExtensionSummary, PendingExtension, SubmitResult } from '@mcl/ext-runtime'
+import type { CapabilityRuntime, ExtensionSummary, SubmitResult } from '@mcl/ext-runtime'
 import { createAiToolsComponent } from './components/aiTools'
 import type { AiToolsDeps } from './components/aiTools'
 
@@ -153,6 +153,7 @@ export interface ConfigPayload {
   autoCleanupVersions?: boolean
   downloadSource?: 'official' | 'bmclapi'
   ui?: UiPrefs
+  extensions?: ExtensionsConfig
 }
 
 /** 渲染层可修改的配置子集（clientToken/lastGameRoot/ai 不在白名单内）。 */
@@ -166,6 +167,7 @@ export interface ConfigPatchPayload {
   downloadSource?: 'official' | 'bmclapi'
   /** ui.backgroundPath 传空串 = 清除自定义背景（删掉固定目录内的文件）。 */
   ui?: UiPrefs
+  extensions?: ExtensionsConfig
 }
 
 /** 自定义背景设置结果（dataUrl 供渲染层立即生效，≤8MB）。 */
@@ -224,7 +226,7 @@ export class LauncherService {
   private readonly components: ComponentHost
   /** 能力面运行时（M5-4）：面板/钩子/fs 代理/net 代理的宿主实现。 */
   private readonly capabilities: CapabilityRuntime
-  /** 扩展流水线（M5-5）：AI 提案 → 一致性检查 → 审核 → 热装载/卸载。 */
+  /** 扩展流水线（C8）：AI 生成 → 一致性检查 → 保存 → 手动启用/停用/卸载。 */
   private readonly pipeline: ExtensionPipeline
   /** 默认实例迁移（M6）：首启创建 main / 旧裸目录补元数据；实例相关 IPC 与启动都等它。 */
   private readonly instanceReady: Promise<unknown>
@@ -268,19 +270,11 @@ export class LauncherService {
       .then(async () => {
         const extensionsDir = join(dirs.mmclDir, 'extensions')
         await ensureDemoExtension(extensionsDir)
-        const { loaded, errors } = await scanExtensions(extensionsDir)
+        const { loaded, disabled, errors } = await this.pipeline.loadInstalled()
         for (const e of errors) console.error('[extensions]', e.dir, '→', e.reason)
-        // 逐个注册：单个扩展注册失败（如工具重名）不中止后续扩展
-        for (const ext of loaded) {
-          try {
-            this.components.register(ext.component)
-          } catch (err) {
-            console.error('[extensions] 注册失败', ext.manifest.id, '→', err)
-          }
-        }
         this.notify({
           kind: errors.length > 0 ? 'warning' : 'success',
-          title: `扩展装载完成（${loaded.length} 个）`,
+          title: `扩展装载完成（${loaded} 个${disabled > 0 ? `，${disabled} 个未加载` : ''}）`,
           ...(errors.length > 0 ? { body: `${errors.length} 个扩展装载失败，详见日志` } : {})
         })
       })
@@ -380,6 +374,16 @@ export class LauncherService {
         await fs.rm(this.backgroundDirPath, { recursive: true, force: true }).catch(() => undefined)
       }
       this.config.ui = { ...this.config.ui, ...patch.ui }
+    }
+    if (patch.extensions !== undefined) {
+      if (typeof patch.extensions !== 'object' || patch.extensions === null) throw new Error('invalid extensions prefs')
+      if (
+        patch.extensions.autoLoadGenerated !== undefined &&
+        typeof patch.extensions.autoLoadGenerated !== 'boolean'
+      ) {
+        throw new Error('invalid extensions.autoLoadGenerated')
+      }
+      this.config.extensions = { ...this.config.extensions, ...patch.extensions }
     }
     await this.persistConfig()
     return this.getConfigPayload()
@@ -1184,7 +1188,8 @@ export class LauncherService {
       removeModFile: (instanceId, filename) => this.removeModFile(instanceId, filename),
       readGameOptions: (instanceId) => this.readGameOptions(instanceId),
       writeGameOptions: (instanceId, entries) => this.writeGameOptions(instanceId, entries),
-      submitExtensionProposal: (manifest, code) => this.pipeline.submit(manifest, code)
+      submitExtensionProposal: (manifest, code) =>
+        this.pipeline.submit(manifest, code, { autoLoad: this.config.extensions?.autoLoadGenerated === true })
     }
   }
 
@@ -1196,7 +1201,7 @@ export class LauncherService {
       '装 mod 流程：确认目标实例已绑定（或绑定）合适版本 → install_fabric 装 Fabric 加载器 → search_mods（带 gameVersion+loader）→ install_mod（project/gameVersion/loader 必填）→ 建议用户启动对应实例（launch_game）。',
       '改游戏设置用 read_config / write_config（options.txt，游戏下次启动生效）；启动游戏用 launch_game。',
       '对启动器或 mod 有不确定的版本兼容问题时，先向用户确认再操作。',
-      '用户请你写启动器扩展（自定义工具/面板/钩子等）时，用 generate_extension 提交，规范如下：',
+      '用户请你写启动器扩展（自定义工具/面板/钩子等）时，用 generate_extension 提交；保存后默认不装载，提醒用户到插件页启用（除非设置已开启自动加载）。规范如下：',
       EXTENSION_API_DOC
     ].join('\n')
   }
@@ -1284,26 +1289,21 @@ export class LauncherService {
     return this.capabilities.panelAction(panelId, action)
   }
 
-  // ---- 扩展审核与管理（M5-5/6）：转发流水线 ----
+  // ---- 扩展安装与启停（C8）：转发流水线 ----
 
-  /** AI 提交扩展提案（generate_extension 工具入口）。 */
+  /** AI 提交扩展（generate_extension 工具入口）：默认保存不装载，设置开启时自动装载。 */
   submitExtensionProposal(manifest: unknown, code: string): Promise<SubmitResult> {
-    return this.pipeline.submit(manifest, code)
+    return this.pipeline.submit(manifest, code, { autoLoad: this.config.extensions?.autoLoadGenerated === true })
   }
 
-  /** 当前待审核提案（渲染层初始拉取）。 */
-  extPending(): PendingExtension | null {
-    return this.pipeline.getPending()
+  /** 启用扩展（插件页）。 */
+  extEnable(id: string): Promise<SubmitResult> {
+    return this.pipeline.enable(id)
   }
 
-  /** 批准并热装载。 */
-  extApprove(): Promise<SubmitResult> {
-    return this.pipeline.approve()
-  }
-
-  /** 拒绝提案。 */
-  extReject(): SubmitResult {
-    return this.pipeline.reject()
+  /** 停用扩展（插件页）。 */
+  extDisable(id: string): Promise<SubmitResult> {
+    return this.pipeline.disable(id)
   }
 
   /** 卸载扩展（注销 + 删目录）。 */
