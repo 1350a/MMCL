@@ -1,12 +1,22 @@
-# MCL — AI 驱动的 Minecraft 启动器
+# MMCL — AI 驱动的 Minecraft 启动器
 
-> 非 Mojang 官方产品。项目许可：ISC。
+**简体中文**
 
-MCL 是 AI 驱动的 Minecraft Java 版第三方启动器。目标是让玩家通过与 AI 对话完成启动器定制：装 mod、改配置、分析崩溃日志，最终由 AI 生成扩展代码并在沙箱中热加载。
+> 非 MINECRAFT 官方产品。未经 MOJANG 或 MICROSOFT 批准，也不与 MOJANG 或 MICROSOFT 关联。
+
+MMCL ( My Minecraft Launcher ) 是一款 AI 驱动的 Minecraft Java 版第三方启动器。AI 是产品设计的核心理念，也是其与现有启动器的核心差异：AI 是启动器的一等公民——玩家可以在启动器中通过与 AI 对话来实现日志分析，设置调整等功能，同时支持"自定义启动器"的操作，由 AI 生成扩展代码并在沙箱中热加载。
 
 ## 当前状态
 
-M0 架构验证版：monorepo + Electron 窗口 + IPC 自检 + 核心库（下载/校验）与单元测试。
+开发中，尚未发布安装包。当前阶段、验证结果与下一步见 [docs/STATUS.md](docs/STATUS.md)。
+
+## 文档
+
+- [docs/STATUS.md](docs/STATUS.md) —— 当前状态（唯一状态源）
+- [docs/CONTEXT.md](docs/CONTEXT.md) —— 交接、决策与历史
+- [docs/DESIGN.md](docs/DESIGN.md) —— 架构、许可与路线图
+- [docs/UI-DESIGN.md](docs/UI-DESIGN.md) —— UI 交互
+- [AGENTS.md](AGENTS.md) —— 协作规范
 
 ## 快速开始
 
@@ -14,7 +24,8 @@ M0 架构验证版：monorepo + Electron 窗口 + IPC 自检 + 核心库（下�
 
 ```bash
 pnpm install     # 安装依赖（含 Electron 二进制）
-pnpm test        # core 单元测试
+pnpm typecheck   # 类型检查（全部包 + launcher）
+pnpm test        # 全仓单元测试
 pnpm build       # 全部构建
 pnpm dev         # 开发模式（HMR）
 pnpm smoke       # 冒烟自检：构建后启动窗口并自动退出
@@ -22,16 +33,13 @@ pnpm smoke       # 冒烟自检：构建后启动窗口并自动退出
 
 ## 目录结构
 
-```
+```文件树
 apps/launcher/        Electron 壳（主进程 / preload / React UI）
-packages/core/        纯 TS 核心库（下载、校验；后续加账户/版本/启动）
-packages/agent/       AI 层（M2 引入）
-packages/ext-runtime/ 扩展沙箱（M5 引入）
-docs/CONTEXT.md       项目上下文 / 交接文档（技术栈、决策、任务清单、运行方式）
-docs/DESIGN.md        设计文档（选型、架构、许可证、路线图）
+packages/core/        纯 TS 核心库
+packages/agent/       AI 层
+packages/host/        组件宿主
+packages/ext-runtime/ 扩展沙箱
 ```
-
-> 接手或恢复会话时先读 [docs/CONTEXT.md](docs/CONTEXT.md)，那里有完整的技术栈、已定决策和任务进度。
 
 ## 冒烟自检
 
@@ -41,10 +49,12 @@ docs/DESIGN.md        设计文档（选型、架构、许可证、路线图）
 
 ## 故障排查
 
-窗口起不来时先看 [docs/INCIDENT-2026-11-19-electron-sandbox.md](docs/INCIDENT-2026-11-19-electron-sandbox.md)：那个事故的症状是"启动即退、退出码 `-2147483645`、只有 `--no-sandbox` 能出窗"，根因是 pnpm 安装的 Electron `dist` 脏产物，处置只要重装/覆盖二进制，不用改业务代码。
+窗口起不来时先看 [docs/INCIDENT-2026-11-19-electron-sandbox.md](docs/INCIDENT-2026-11-19-electron-sandbox.md)：那个事故的症状是"启动即退、退出码 `-2147483645`、只有添加 `--no-sandbox` 能出窗"
 
-## 许可证纪律
+## LICENSE
 
-ISC 项目；依赖限宽松许可；不搬运 GPL 代码；无许可证仓库不可用。详见 `docs/DESIGN.md` 第 6 节。
+ISC
+
+依赖仅接受 MIT / Apache-2.0 / BSD / ISC；GPL/AGPL 严禁，无 LICENSE 的仓库视为不可用。详见 [docs/DESIGN.md](docs/DESIGN.md) §6。
 
 > ISC 其实和 MIT 没啥区别，选择这个许可证只是作者的个性化选择 :P

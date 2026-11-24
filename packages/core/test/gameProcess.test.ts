@@ -46,7 +46,7 @@ describe('launchGame', () => {
     expect(logs).toContainEqual({ line: 'game stderr line', source: 'stderr' })
 
     const logContent = await fs.readFile(join(dir, 'logs', 'latest.log'), 'utf8')
-    expect(logContent).toContain('=== MCL launch')
+    expect(logContent).toContain('=== MMCL launch')
     expect(logContent).toContain('game stdout line')
     expect(logContent).toContain('game stderr line')
   })

@@ -12,7 +12,7 @@ const root = document.getElementById('splash-root') as HTMLElement
 
 root.innerHTML = `
   <div class="splash">
-    <div class="splash-logo">MCL</div>
+    <div class="splash-logo">MMCL</div>
     <div class="splash-sub">AI 驱动的 Minecraft 启动器</div>
     <div class="splash-progress"><div class="splash-bar"></div></div>
     <div class="splash-step">准备启动…</div>

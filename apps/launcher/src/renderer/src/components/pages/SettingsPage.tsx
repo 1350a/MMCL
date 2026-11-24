@@ -319,7 +319,7 @@ export function SettingsPage({
               <section className="card">
                 <h2>关于</h2>
                 <div className="settings-about">
-                  <div className="settings-about-title">MCL v{version || '…'}</div>
+                  <div className="settings-about-title">MMCL v{version || '…'}</div>
                   <div>非官方第三方启动器，与 Mojang Studios / Microsoft 无关联。</div>
                   <div>开源许可：ISC。</div>
                   <div>内置素材（背景图等）权利归原权利人；协议与素材声明文本定稿前以占位展示。</div>

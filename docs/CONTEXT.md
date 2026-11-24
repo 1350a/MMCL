@@ -1,9 +1,10 @@
-# MCL 项目上下文（交接文档）
+# MMCL 项目上下文（交接文档）
 
-> 这份文件是项目的"可迁移记忆"：技术栈、关键决策、任务清单、运行方式、迁移记录。
-> 新会话、新协作者、未来的我：**先读这份，再读 [DESIGN.md](./DESIGN.md) 的 3/7/8 节**，然后跑 `pnpm test` 确认基线。
+> 这份文件是项目的"可迁移记忆"：技术栈、关键决策、历史与迁移记录。
+> 新会话、新协作者、未来的我：先读 [STATUS.md](./STATUS.md) 了解当前状态，再读这份，然后读 [DESIGN.md](./DESIGN.md) 的 3/7/8 节。
+> 本文件不维护当前阶段、测试结果与版本号。
 
-最后更新：2026-11-23（UI 重构 C1~C7 已提交验收：下载页 / 设置页接入完毕，260 测试绿；下一步 C8 插件页、C9 收尾）
+最后更新：2026-11-24（文档体系调整：新增 STATUS.md 作为唯一状态源；AGENTS 只保留规范；当前阶段以 STATUS.md 为准）
 
 ---
 
@@ -11,12 +12,12 @@
 
 | 项 | 值 |
 |---|---|
-| 代号 | **MCL**（产品正式名待定，务必避开 "Minecraft" 商标） |
+| 项目名 | **MMCL**（对外产品名；代码命名空间仍为 mcl，详见 AGENTS.md §1） |
 | 一句话 | AI 驱动的 Minecraft Java 版第三方启动器 |
 | 仓库位置 | `C:\Users\Mac\Project\MMCL`（2026-11-18 从 DSH 工作区迁入，2026-11-19 由 `mcl` 更名） |
 | 许可证 | **ISC**（见 [LICENSE](../LICENSE)） |
 | Git | `main` 分支，首个 commit `fa77480`（2026-11-18 初始化 M0 脚手架） |
-| 当前阶段 | **UI 重构实施中（2026-11-23）：C1~C7 已提交验收，260 测试绿**——C1 纯搬运拆分 `1516cc8` / C2 视觉令牌 `6725a02` / C3 数据层 `.mmcl` 布局 `93daaf5` / C4 Splash+TitleBar `3764e2d` / C5 三大件+AI 中心+通知任务+多账户+隔离语义+浅色主题定版 `32ea703` / C6 下载页（版本安装含装 Fabric / Mods / Java 运行时 / 游戏根选择 / BMCLAPI 引导）`f95edfe` / C7 设置页五组（自定义背景 data URL / 隔离变更预览 / 下载源 / 更新四选 / 关于）`a5fe94d`。**下一步 C8 插件页 → C9 收尾**（设计见 [UI-DESIGN.md](./UI-DESIGN.md)，临时计划稿 TEMP-C6-C7-PLAN.md 未入库）。里程碑回顾：M1~M6 全部完成验收（M6 多实例 = `fd33475`；M5 = `4653930`；AI 会话持久化 ai-session.json 推翻 M2 内存态约定）。备选：M4.5 发布准备（用户明确不急）；UI 素材（PCL 转存 Blocks/ + Skins/）接入待做，定论见 §4.4 |
+| 当前阶段 | 见 [STATUS.md](./STATUS.md)；本节不再复制阶段状态，避免漂移。 |
 | 开发者 | 个人开发者（新手），因此选型第一优先级是"一种语言、学习曲线平缓" |
 
 ---
@@ -231,7 +232,7 @@ pnpm smoke:ns    # 冒烟自检：electron . --smoke-test --no-sandbox
 | 2026-11-22 | **M5-5 + M5-6 完成（AI 生成流水线 + 管理 UI，M5 代码收尾）**：①`ExtensionPipeline`（ext-runtime/src/pipeline.ts）：submit（id 形态 + 保留占用〔builtin. 前缀 / sandbox.demo〕→ parseManifest → checkConsistency 双向比对 → bundleSource 试打包 → 入单槽待审区）→ approve（落盘 extensions/<id>/ → 装载 → 同 id 先卸后装 = 更新语义）→ remove（宿主强制回滚 + fs.rm 目录）→ reject（清槽零残留）②一致性检查（consistency.ts）：正则扫描 `capabilities['X']` / `capabilities.X` 访问形态，用了未声明 / 声明未用双向都拒；诚实边界 = 动态键名逃过扫描但宿主注入结构性保证运行时 undefined，别名截取判 unused 拒（宁可误拒）③`generate_extension` 工具进 builtin.ai-tools + `EXTENSION_API_DOC`（docs.ts）随 aiSystemPrompt 注入，校验错误信息直达 AI 可修正重提④M5-6 UI：扩展审核卡（manifest 摘要 + 能力 chips〔fs/net 黄色警示〕+ fs/net 作用域 + 代码全文 + 批准/拒绝）+ 扩展管理卡（id/version/能力/state + 移除；空态引导）+ IPC 五通道 ext:pending/approve/reject/list/remove + 事件 event:ext-pending / ext-list-changed⑤host 小改：ComponentManifest 加可选 version（manifest.json → 组件 → 管理 UI 透传）⑥顺手修：launcher 扫描注册循环改逐个 try/catch（单个注册失败不中止后续）⑦**AI 干活过程可视化（用户追加需求）**：ChatClient 加 `onToolEvent`（args 参数流式增量 / exec 执行 / done 完成，event:ai-tool 推送），聊天卡灰色等宽活动行实时显示「⚙ 工具 生成参数中：<参数尾部>」，模型生成 generate_extension 大参数时不再面对空白干等；活动行新一轮提问清空。单测 +23，214 全绿（215 系当时笔误，实测合计 214），typecheck/build/smoke 全过。Mimosa deep 全仓审计（commit `4653930` 后补扫）0 findings / 0 依赖命中（scan-2026-11-22T12-33-30.032Z-52d197a059fd）。**桌面实锤：用户按验收链让 AI 生成了 my.dice 扩展并批准装载**（smoke 中 my.dice → active 证实扩展持久化与热装载链路真实生效） |
 | 2026-11-22 | **M6 多实例隔离完成（用户拍板方向「多实例隔离」，不急打包）**：①core/instances.ts：实例 = instances/<id>/instance.json（id=目录名 isInstanceId；versionId 绑定已安装版本可空；扫描式无注册表，旧裸目录合成 {id,name}）；ensureDefaultInstance（首启创建 main / 旧数据补元数据）/ createInstance / updateInstance / getInstance；isInstanceId 定义移到 core（实例概念归属层），host 改为 re-export（host 新增 @mcl/core 依赖）②launcher：instanceDir 硬编码 'main' 全部参数化（launchInstance 读实例绑定版本，mods/options/crash 按 instanceId）；createInstancePayload/setInstanceVersion 附带版本已安装校验；ensureManifest 换 fetchVersionManifestWithFallback（官方失败回退 BMCLAPI 清单镜像，与 M4 库下载同思路）③AI 工具 +list_instances/create_instance；launch_game 改按实例（instanceId 缺省唯一实例自动选）；install_mod/list_mods/remove_mod/read_config/write_config/read_crash_log 加可选 instanceId（缺省 main）④渲染层实例卡：实例下拉 + 启动/停止 + 绑定版本 select + 装 Fabric + 新建实例（name+版本）+ 删除实例（UI 确认弹窗把关）；Mods 卡跟随选中实例；IPC 三处同步 instance:list/create/setVersion/delete——删除 = core deleteInstance 整实例目录不可逆 rm（不存在即抛可读错误），游戏运行中一律拒绝，main 删后下次启动 ensureDefaultInstance 重建空 main；**刻意不提供删除实例的 AI 工具入口**（AI 触发存档删除是脚枪）⑤**真 bug（桌面 smoke 实锤）**：quickjs-emscripten asyncify 是模块级单挂起约束，多沙箱扩展并发初始化报 `QuickJSAsyncifyError: Already suspended`（M5 时代单扩展未暴露）→ sandbox.ts 进程级 guest 执行锁串行化全部 guest 执行窗口（常量句柄/入口 eval/activate/callGuestFn，窗口内含 asyncified 悬挂与 promise 排水，asyncified 宿主回调体不执行 guest 代码故无死锁）；并发回归测试入 pipeline.test⑥EXTENSION_API_DOC 示例工具名 dice_roll → my.dice.roll（用户扩展照抄示例名与内置 demo 撞名致 demo 激活失败——撞名失败是诚实语义，文档补防撞名指引）⑦**AI 会话持久化（重启恢复）**：ChatSession 加 exportHistory/restoreHistory（agent 层只收 user/assistant 合法条目，落盘职责归调用方）+ launcher 落盘 `ai-session.json`（userData 根，最近 100 条，aiSend 首次用时回灌、aiClear 删盘）+ IPC `ai:history` 渲染层回灌聊天显示——推翻 M2「会话内存态不落盘」约定（DESIGN §5.1 已同步）。228 测试绿（+14：core instances 9 + manifest 兜底 3 + agent 会话导出/恢复 1 + 并发回归 1），typecheck/build/smoke 全过，smoke 实锤 my.dice + sandbox.demo 双沙箱并存加载。**MVP 收尾后全仓实测 230（core 143 + agent 11 + host 15 + ext-runtime 61）** |
 | 2026-11-23 | **M6 验收提交 `fd33475` + UI 重构 C1~C5 已提交**（每笔 typecheck+build+test+用户桌面验收后单笔 commit）：C1 纯搬运拆分（App.tsx 869 行 → 9 hooks + 9 卡片 + 78 行组合根，行为零变化）`1516cc8`；C2 设计令牌 + @layer 样式组织 + 默认背景图 `6725a02`；C3 `.mmcl` 数据布局（启动器数据）+ mmcl.json 全局配置 + 游戏根解析 + 遗留数据幂等迁移 `93daaf5`；C4 Splash 六步管线（错误面板重试/跳过）+ TitleBar overlay `3764e2d`；C5 主页三大件（TitleBar/SideBar/BottomBar）+ AI 中心面板 + 通知任务中枢（event:notify Toast 栈可带动作）+ 多账户 + 版本设置弹窗 + 隔离语义（五策略矩阵/每版本覆盖/dataDirFor）+ 浅色主题定版（背景白化幕 + 浅色 UI，推翻深色玻璃）`32ea703`，258 测试绿。设计文档 [UI-DESIGN.md](./UI-DESIGN.md) 全量落地中 |
-| 2026-11-23 | **UI 重构 C6/C7 已提交**：C6 下载页 `f95edfe`——版本安装（远端清单+进度+已装列表含每行「装 Fabric」）/ Mods 管理（操作对象跟随底栏当前版本，本地 jar 安装+删除）/ Java 运行时（内置列表 + LTS 8·17·21 一键下载）/ 游戏根选择（系统原生目录对话框 → 记忆 lastGameRoot + 补建目录 + 遗留迁移幂等重跑，重启生效）；core 新增 assertDirWritable；IPC dialog:pick-directory + gameRoot:set；official 源安装失败 → 通知带「转用 BMCLAPI 镜像」动作（点击才改偏好），downloadSource=bmclapi 时清单主源翻转且改源即作废清单缓存。C7 设置页 `a5fe94d`——左侧五组（外观/版本与隔离/Java/网络/通用）右侧面板；自定义背景（复制入 .mmcl\background\custom.* → 主进程读 data URL ≤8MB 即时生效，恢复默认删文件）；全局隔离策略变更 isolation:preview 列出有效隔离翻转的「跟随全局」版本，确认弹窗才落盘；config:set 白名单补 isolationStrategy；background:get 只读固定目录防越权；app:version 供关于区；ui.sidebarHidden 持久（隐藏≠收起，挂件唤回）；HomeCanvas 禁用判定改「禁用即留白」对齐 §2.1。260 测试绿（core 173 + agent 11 + host 15 + ext-runtime 61）。**下一步 C8 插件页 → C9 收尾** |
+| 2026-11-23 | **UI 重构 C6/C7 已提交**：C6 下载页 `f95edfe`——版本安装（远端清单+进度+已装列表含每行「装 Fabric」）/ Mods 管理（操作对象跟随底栏当前版本，本地 jar 安装+删除）/ Java 运行时（内置列表 + LTS 8·17·21 一键下载）/ 游戏根选择（系统原生目录对话框 → 记忆 lastGameRoot + 补建目录 + 遗留迁移幂等重跑，重启生效）；core 新增 assertDirWritable；IPC dialog:pick-directory + gameRoot:set；official 源安装失败 → 通知带「转用 BMCLAPI 镜像」动作（点击才改偏好），downloadSource=bmclapi 时清单主源翻转且改源即作废清单缓存。C7 设置页 `a5fe94d`——左侧五组（外观/版本与隔离/Java/网络/通用）右侧面板；自定义背景（复制入 .mmcl\background\custom.* → 主进程读 data URL ≤8MB 即时生效，恢复默认删文件）；全局隔离策略变更 isolation:preview 列出有效隔离翻转的「跟随全局」版本，确认弹窗才落盘；config:set 白名单补 isolationStrategy；background:get 只读固定目录防越权；app:version 供关于区；ui.sidebarHidden 持久（隐藏≠收起，挂件唤回）；HomeCanvas 禁用判定改「禁用即留白」对齐 §2.1。260 测试绿（core 173 + agent 11 + host 15 + ext-runtime 61）。后续状态见 [STATUS.md](./STATUS.md) |
 
 ---
 

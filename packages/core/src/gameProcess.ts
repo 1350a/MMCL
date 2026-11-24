@@ -40,7 +40,7 @@ export function launchGame(spec: LaunchSpec, handlers: LaunchHandlers = {}): Lau
   const logFile = join(spec.cwd, 'logs', 'latest.log')
   mkdirSync(join(spec.cwd, 'logs'), { recursive: true })
   const stream = createWriteStream(logFile, { flags: 'a' })
-  stream.write(`=== MCL launch ${new Date().toISOString()} ===\n`)
+  stream.write(`=== MMCL launch ${new Date().toISOString()} ===\n`)
 
   const args = [...spec.jvmArgs, spec.mainClass, ...spec.gameArgs]
   // windowsHide：java.exe 是控制台程序，Electron（GUI 进程）spawn 它时 Windows 会另开黑窗；

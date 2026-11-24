@@ -1,6 +1,6 @@
-# MCL UI 设计文档（v0.1）
+# MMCL UI 设计文档
 
-- 阶段：实施中（2026-11-23 起，落地顺序见 §8；**C1~C7 已提交**：C5=`32ea703`、C6=`f95edfe`、C7=`a5fe94d`；C8 插件页 / C9 收尾待做）
+- 阶段：见 [STATUS.md](./STATUS.md)；落地顺序见 §8
 - 关联：[DESIGN.md](DESIGN.md) §4 架构不变；本文档只约束 UI/交互层，与 DESIGN.md 冲突时 UI 范畴内以本文档为准
 - 来源：2026-11-22/23 与产品决策人的十七轮收敛讨论，全部条目已无异议
 - 约定：UI 展示层术语只用「版本」「.minecraft 文件夹」，不出现「实例」；代码内部 instances 命名暂不动
@@ -140,13 +140,13 @@ renderer/src/
 
 纯原生 CSS 实现（Electron 33 = Chromium 130，`@layer`/`@scope`/CSS 变量足够），不引 CSS Modules、不引 Tailwind。
 
-落地顺序（每步一笔 commit，typecheck + 测试通过才进下一笔）：
+落地顺序（每步一笔 commit，typecheck + 测试通过才进下一笔；完成状态见 [STATUS.md](./STATUS.md)）：
 
-1. [x] M6 验收 commit（前置，与 UI 重构无关；`fd33475`）
-2. [x] 纯搬运拆分（行为零变化；C1 `1516cc8`）
-3. [x] tokens + `@layer` 样式组织（C2 `6725a02`）
-4. [x] TitleBar(overlay) + Splash + 三大件骨架（C4 `3764e2d`；C3 数据层 `93daaf5`、C5 三大件+中心区 `32ea703` 已落）
-5. [~] 下载页（C6 `f95edfe`）→ 设置页（C7 `a5fe94d`）→ 插件页逐个接入（C8 待做）
+1. M6 验收（前置，与 UI 重构无关）
+2. 纯搬运拆分（行为零变化）
+3. tokens + `@layer` 样式组织
+4. TitleBar(overlay) + Splash + 三大件骨架
+5. 下载页 → 设置页 → 插件页逐个接入
 6. 安装器 = M7+ 另立里程碑
 
 不变式：IPC 三处同步（main handler → preload 暴露 → env.d.ts 类型）· core 禁 import electron/react · 渲染层无 Node · 安全基线（contextIsolation/sandbox/nodeIntegration=false/window.open 拦截）一字不动。

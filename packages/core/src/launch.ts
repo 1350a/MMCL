@@ -118,7 +118,7 @@ export function assembleLaunch(versionJson: VersionJson, options: AssembleOption
     assets_index_name: assetsIndexId,
     user_properties: '{}',
     natives_directory: paths.nativesDir,
-    launcher_name: options.launcherName ?? 'MCL',
+    launcher_name: options.launcherName ?? 'MMCL',
     launcher_version: options.launcherVersion ?? VERSION,
     library_directory: paths.librariesRoot,
     classpath_separator: pathDelimiter,

@@ -2,7 +2,7 @@
   "name": "@mcl/agent",
   "version": "0.1.0",
   "private": true,
-  "description": "MCL AI 层：OpenAI 兼容协议适配（HTTP+SSE 自实现）、工具、会话。纯 TS，不依赖 Electron。",
+  "description": "MMCL AI 层：OpenAI 兼容协议适配（HTTP+SSE 自实现）、工具、会话。纯 TS，不依赖 Electron。",
   "license": "ISC",
   "type": "commonjs",
   "main": "dist/index.js",

@@ -959,7 +959,7 @@ export class LauncherService {
       // 隔离开 = 版本文件夹（数据随版本）；关 = 根 .minecraft（saves/mods 全局共享）
       gameDir: isolationOn ? this.instanceDirFor(instanceId) : this.dirs.gameRoot,
       rootDir: this.dirs.gameRoot,
-      launcherName: 'MCL',
+      launcherName: 'MMCL',
       launcherVersion: '0.1.0',
       ...(javaAgent ? { javaAgent } : {}),
       clientJarPath: resolved.clientJarPath
@@ -1190,7 +1190,7 @@ export class LauncherService {
 
   private aiSystemPrompt(): string {
     return [
-      '你是 Minecraft 第三方启动器 MCL 的内置助手。',
+      '你是 Minecraft 第三方启动器 MMCL 的内置助手。',
       '回答简洁、可操作；涉及版本与运行状态时优先调用工具查询而不是猜测。',
       '用户环境为 Windows；游戏实例在游戏根目录 instances/<实例 id> 下（多实例：list_instances 查看、create_instance 新建）。每个实例绑定一个已安装版本，launch_game 按实例启动；装 mod / 改配置默认作用于 main 实例，可用 instanceId 参数指定其他实例。',
       '装 mod 流程：确认目标实例已绑定（或绑定）合适版本 → install_fabric 装 Fabric 加载器 → search_mods（带 gameVersion+loader）→ install_mod（project/gameVersion/loader 必填）→ 建议用户启动对应实例（launch_game）。',
