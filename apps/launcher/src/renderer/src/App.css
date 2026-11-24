@@ -172,29 +172,6 @@
     word-break: break-all;
   }
 
-  .java-need {
-    margin-top: 12px;
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    font-size: var(--mcl-font-sm);
-    color: var(--mcl-warning);
-    background: color-mix(in srgb, var(--mcl-warning) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--mcl-warning) 30%, transparent);
-    border-radius: var(--mcl-radius-md);
-    padding: 8px 12px;
-  }
-
-  .java-need span {
-    flex: 1;
-  }
-
-  .ai-config {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-
   .ai-chat .ai-user {
     color: var(--mcl-primary);
     margin-bottom: 6px;
@@ -282,9 +259,6 @@
     background: color-mix(in srgb, var(--mcl-warning) 10%, transparent);
     color: var(--mcl-warning);
     border-color: color-mix(in srgb, var(--mcl-warning) 30%, transparent);
-  }
-  .ext-code {
-    height: 220px;
   }
   .ext-row {
     border: 1px solid var(--mcl-border);
