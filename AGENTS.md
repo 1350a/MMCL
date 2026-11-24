@@ -71,6 +71,7 @@ docs/                 STATUS / CONTEXT / DESIGN / UI-DESIGN / INCIDENT
 | 单元测试（Vitest） | `pnpm test` |
 | 构建全部 | `pnpm build` |
 | 冒烟自检（建窗口→写标记→退出） | `pnpm smoke` |
+| 打 alpha 便携目录 | `pnpm package:alpha` |
 
 - `pnpm dev` 会先构建 `@mcl/core`、`@mcl/host`、`@mcl/ext-runtime` 再启动 `apps/launcher`；单独跑某个包：`pnpm --filter @mcl/core test`。
 - 一步一 commit；提交前缀用 `feat:` / `fix:` / `docs:` / `refactor:` / `chore:`，说明“做了什么 + 为什么”。
